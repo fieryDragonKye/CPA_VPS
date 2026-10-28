@@ -2271,6 +2271,9 @@
     "auth_error": "Authorization was refused."
   },
   "insights": {
+    "duration": "Total duration",
+    "ttft": "First-token latency",
+    "ttftHint": "First-token latency reported by CPA; it may precede visible text. Missing, unmeasured and historical values display —.",
     "title": "Usage studio",
     "subtitle": "Your models, requests and token usage — a clearer view, kept locally.",
     "localFirst": "Local records · private by default",

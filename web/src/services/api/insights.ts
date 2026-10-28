@@ -27,6 +27,7 @@ export interface UsageEvent {
   client: string;
   failed: number;
   latency_ms: number;
+  ttft_ms?: number | null;
   input_tokens: number;
   output_tokens: number;
   reasoning_tokens: number;

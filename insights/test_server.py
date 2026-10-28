@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import tempfile
 import threading
 import time
@@ -21,6 +22,36 @@ def event(**overrides):
 
 
 class StoreTests(unittest.TestCase):
+    def test_ttft_validation_and_stable_identity(self):
+        baseline = normalize(event())
+        for value in (None, 0, -1, True, "unknown", float("nan"), float("inf"), 10**500):
+            item = normalize(event(timestamp=baseline["timestamp"], ttft_ms=value))
+            self.assertIsNone(item["ttft_ms"])
+            self.assertEqual(item["id"], baseline["id"])
+        valid = normalize(event(timestamp=baseline["timestamp"], ttft_ms=1250))
+        self.assertEqual(valid["ttft_ms"], 1250)
+        self.assertEqual(valid["id"], baseline["id"])
+        self.store.ingest([event(ttft_ms=1250)])
+        self.assertEqual(self.store.events({})["rows"][0]["ttft_ms"], 1250)
+
+    def test_legacy_database_migrates_without_rewriting_history(self):
+        legacy = Path(self.temp.name) / "legacy.sqlite"
+        with sqlite3.connect(legacy) as db:
+            db.execute("""CREATE TABLE events (
+                id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, model TEXT, alias TEXT,
+                provider TEXT, source TEXT, client TEXT, failed INTEGER, latency_ms INTEGER,
+                input_tokens INTEGER, output_tokens INTEGER, reasoning_tokens INTEGER,
+                cached_tokens INTEGER, endpoint TEXT, total_tokens INTEGER)""")
+            db.execute("INSERT INTO events(id,timestamp,model,total_tokens) VALUES(?,?,?,?)",
+                       ("legacy-id", datetime.now(timezone.utc).isoformat(), "legacy-model", 42))
+        db.close()
+        for _ in range(2):
+            migrated = Store(legacy)
+            row = migrated.events({})["rows"][0]
+            self.assertIsNone(row["ttft_ms"])
+            self.assertEqual(row["total_tokens"], 42)
+            self.assertEqual(migrated.summary({})["stored_records"], 1)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.store = Store(Path(self.temp.name) / "usage.sqlite")
@@ -103,6 +134,7 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(json.load(response)["requests"], 1)
         with self.request(API + "export", headers) as response:
             content = response.read().decode("utf-8-sig")
+            self.assertIn("ttft_ms", content.splitlines()[0])
             self.assertIn("test-model", content)
             self.assertNotIn("THISISATESTSECRET", content)
             self.assertNotIn("ANOTHERTESTCLIENTSECRET", content)

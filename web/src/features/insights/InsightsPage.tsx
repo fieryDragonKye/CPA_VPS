@@ -15,6 +15,7 @@ import {
   type UsageSummary,
 } from '@/services/api/insights';
 import styles from './InsightsPage.module.scss';
+import { formatTtft } from './metrics';
 
 const initialQuery: UsageQuery = {
   range: '24h',
@@ -558,13 +559,24 @@ export function InsightsPage() {
                 <caption className="sr-only">{t('insights.tab.events')}</caption>
                 <thead>
                   <tr>
-                    {['time', 'model', 'tokens', 'latency', 'result', 'cost', 'details'].map(
-                      (field) => (
-                        <th key={field} scope="col">
-                          {t(`insights.${field}`)}
-                        </th>
-                      )
-                    )}
+                    {[
+                      'time',
+                      'model',
+                      'tokens',
+                      'duration',
+                      'ttft',
+                      'result',
+                      'cost',
+                      'details',
+                    ].map((field) => (
+                      <th
+                        key={field}
+                        scope="col"
+                        title={field === 'ttft' ? t('insights.ttftHint') : undefined}
+                      >
+                        {t(`insights.${field}`)}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -738,6 +750,7 @@ function EventRow({
         </td>
         <td>{number(event.total_tokens)}</td>
         <td>{number(event.latency_ms / 1000)}s</td>
+        <td title={t('insights.ttftHint')}>{formatTtft(event.ttft_ms)}</td>
         <td>
           <span className={`${styles.result} ${event.failed ? styles.failed : ''}`}>
             {t(event.failed ? 'insights.failed' : 'insights.success')}
@@ -759,7 +772,7 @@ function EventRow({
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={7}>
+          <td colSpan={8}>
             <dl className={styles.eventDetail}>
               {(
                 [

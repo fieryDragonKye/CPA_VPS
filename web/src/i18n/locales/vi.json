@@ -2277,6 +2277,9 @@
     "auth_error": "Ủy quyền đã bị từ chối."
   },
   "insights": {
+    "duration": "Tổng thời gian",
+    "ttft": "Độ trễ token đầu tiên",
+    "ttftHint": "Độ trễ token đầu tiên do CPA ghi nhận, có thể trước văn bản hiển thị. Dữ liệu thiếu, chưa đo hoặc cũ hiển thị —.",
     "title": "Usage studio",
     "subtitle": "Your models, requests and token usage — a clearer view, kept locally.",
     "localFirst": "Local records · private by default",

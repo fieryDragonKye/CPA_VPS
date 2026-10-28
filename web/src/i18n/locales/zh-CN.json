@@ -2269,6 +2269,9 @@
     "auth_error": "授权被拒绝。"
   },
   "insights": {
+    "duration": "总耗时",
+    "ttft": "首 Token 延迟",
+    "ttftHint": "CPA 记录的首次 Token 延迟，不一定是首个可见文字。缺失、未测量或旧记录显示 —。",
     "title": "用量分析",
     "subtitle": "让每一次调用都有迹可循。模型、请求与 Token 消耗，在这里清晰呈现。",
     "localFirst": "本地记录 · 数据留在本机",

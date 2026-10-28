@@ -43,6 +43,13 @@ def positive(value: object) -> int:
         return 0
 
 
+def nullable_ttft(value: object) -> float | None:
+    # Zero is also the upstream sentinel for unavailable measurement.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if 0 < value <= 10**12 and math.isfinite(value) else None
+
+
 def normalize(record: object) -> dict | None:
     if not isinstance(record, dict):
         return None
@@ -86,6 +93,8 @@ def normalize(record: object) -> dict | None:
     # Raw keys, upstream headers, prompts, responses and failure bodies are never persisted.
     identity = {**item, "request_id": str(record.get("request_id") or "")}
     item["id"] = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    # Keep the pre-migration event identity stable; timing is optional metadata.
+    item["ttft_ms"] = nullable_ttft(record.get("ttft_ms"))
     return item
 
 
@@ -108,6 +117,9 @@ class Store:
                   cache REAL NOT NULL, updated TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(events)")}
+            if "ttft_ms" not in columns:
+                db.execute("ALTER TABLE events ADD COLUMN ttft_ms REAL")
 
     @contextmanager
     def connect(self):
@@ -176,7 +188,7 @@ class Store:
         with self.connect() as db:
             count = db.execute(f"SELECT COUNT(*) FROM events e WHERE {where}", args).fetchone()[0]
             rows = [dict(r) for r in db.execute(f"""SELECT e.timestamp,e.model,e.alias,e.provider,e.source,e.client,e.failed,
-              e.latency_ms,e.input_tokens,e.output_tokens,e.reasoning_tokens,e.cached_tokens,e.total_tokens,e.endpoint,
+              e.latency_ms,e.ttft_ms,e.input_tokens,e.output_tokens,e.reasoning_tokens,e.cached_tokens,e.total_tokens,e.endpoint,
               {self.cost_sql()} estimated_cost FROM events e LEFT JOIN prices p ON p.model=e.model
               WHERE {where} ORDER BY e.timestamp DESC,e.id DESC LIMIT ? OFFSET ?""", [*args, size, 0 if export else (page - 1) * size])]
         return {"rows": rows, "total": count, "page": page, "page_size": size}
@@ -327,7 +339,7 @@ def make_handler(keeper: Keeper, page: Path):
                 if route == "export":
                     records = keeper.store.events(query, export=True)
                     output = io.StringIO()
-                    fields = ["timestamp", "model", "provider", "source", "client", "failed", "latency_ms", "input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens", "total_tokens", "estimated_cost"]
+                    fields = ["timestamp", "model", "provider", "source", "client", "failed", "latency_ms", "ttft_ms", "input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens", "total_tokens", "estimated_cost"]
                     writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
                     writer.writeheader()
                     for row in records["rows"]:

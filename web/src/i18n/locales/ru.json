@@ -2265,6 +2265,9 @@
     "auth_error": "Авторизация отклонена."
   },
   "insights": {
+    "duration": "Общее время",
+    "ttft": "До первого токена",
+    "ttftHint": "Время до первого токена по данным CPA; это не обязательно первый видимый текст. Для отсутствующих измерений и старых записей показано —.",
     "title": "Usage studio",
     "subtitle": "Your models, requests and token usage — a clearer view, kept locally.",
     "localFirst": "Local records · private by default",

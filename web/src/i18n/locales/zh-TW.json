@@ -2297,6 +2297,9 @@
     "auth_error": "授權遭拒。"
   },
   "insights": {
+    "duration": "總耗時",
+    "ttft": "首 Token 延遲",
+    "ttftHint": "CPA 記錄的首次 Token 延遲，不一定是首個可見文字。缺失、未測量或舊記錄顯示 —。",
     "title": "Usage studio",
     "subtitle": "Your models, requests and token usage — a clearer view, kept locally.",
     "localFirst": "Local records · private by default",
