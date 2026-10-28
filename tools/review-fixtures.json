@@ -1,0 +1,14 @@
+{
+  "description": "SHA256 of manually reviewed synthetic values in named regression tests; not a directory-wide exclusion.",
+  "api-token": {
+    "web/tests/apiKeyNames.test.ts": [
+      "97f9fbdacfddbe9bb05536e9bef4f4c524288bb31b387844e85a41388bc12e0b",
+      "a3581366ea504ecb40decc35e5e9e1efb59defe652806be34688f8b924a04627",
+      "a4436ec88963d66c0ff80d7eebcd48354dd3d4bd1b4436cb02e6c8166e9b9e77"
+    ],
+    "web/tests/apiKeyStrength.test.ts": [
+      "a10c58d29b30adc4529263efb6eda7f62e6f37abbb91d902cf863d309a70bf24",
+      "a4f9cad487793d06f0b71c3b670d384a5d22146c6deaf205ea592597ee201db1"
+    ]
+  }
+}

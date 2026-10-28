@@ -1,0 +1,14 @@
+* text=auto eol=lf
+*.sh text eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.webp -text
+*.ico -text
+*.woff -text
+*.woff2 -text
+*.bin -text
+# Preserve upstream vendored renderers byte-for-byte; do not reformat them.
+plugin/internal/plugin/web/vendor/* -whitespace

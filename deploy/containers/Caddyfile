@@ -1,0 +1,21 @@
+{
+    admin off
+    auto_https off
+}
+http://:8080 {
+    bind 0.0.0.0
+    handle /healthz {
+        respond "private-gateway-ready" 200
+    }
+    handle /v8/management/extensions/insights/* {
+        reverse_proxy 127.0.0.1:8320
+    }
+    # Only routes used by this interface and its installed private plugin.
+    @management path /management.html /v8/management /v8/management/* /v1/models /v1/responses /v0/resource/plugins/cpa-codex-candy-eval /v0/resource/plugins/cpa-codex-candy-eval/* /v0/management/plugins/cpa-codex-candy-eval /v0/management/plugins/cpa-codex-candy-eval/* /v0/management/config /v0/management/auth-files/models /v0/management/auth-files/status
+    handle @management {
+        reverse_proxy 127.0.0.1:8317
+    }
+    handle {
+        respond "Not found" 404
+    }
+}

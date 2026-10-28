@@ -1,0 +1,112 @@
+name: cpa-personal-ssh
+x-logging: &logs
+  driver: local
+  options: {max-size: "10m", max-file: "3"}
+x-security: &security
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  logging: *logs
+  tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+  pull_policy: never
+services:
+  network-owner:
+    <<: *security
+    image: ${PYTHON_IMAGE:?Prepare instance first}
+    user: "10001:10001"
+    command: [python, -c, "import signal,sys; signal.signal(signal.SIGTERM,lambda *_:sys.exit(0)); signal.pause()"]
+    mem_limit: 32m
+    cpus: 0.10
+    pids_limit: 16
+    ports: ["127.0.0.1:18318:8080"]
+    networks: [backend, egress]
+    healthcheck:
+      test: [CMD, python, -c, "import os; os.kill(1,0)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+  cpa:
+    <<: *security
+    image: cpa-personal-backend:${PERSONAL_RELEASE}
+    build:
+      context: ..
+      dockerfile: deploy/containers/CPA.Dockerfile
+      args: {PYTHON_IMAGE: "${PYTHON_IMAGE}"}
+    network_mode: service:network-owner
+    depends_on:
+      network-owner: {condition: service_healthy, restart: true}
+    mem_limit: 768m
+    cpus: 1.50
+    pids_limit: 192
+    environment: {TZ: UTC, GOMEMLIMIT: 512MiB}
+    volumes:
+      - ${INSTANCE_ROOT}/config:/etc/cpa
+      - ${INSTANCE_ROOT}/auths:/var/lib/cpa/auths
+      - ${INSTANCE_ROOT}/logs:/var/lib/cpa/logs
+      - ${INSTANCE_ROOT}/plugins:/var/lib/cpa/plugins
+    healthcheck:
+      test: [CMD, python, /opt/cpa/healthcheck.py, cpa]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+  insights:
+    <<: *security
+    image: cpa-personal-insights:${PERSONAL_RELEASE}
+    build:
+      context: ..
+      dockerfile: deploy/containers/Insights.Dockerfile
+      args: {PYTHON_IMAGE: "${PYTHON_IMAGE}"}
+    network_mode: service:network-owner
+    depends_on:
+      network-owner: {condition: service_healthy, restart: true}
+      cpa: {condition: service_healthy}
+    mem_limit: 256m
+    cpus: 0.50
+    pids_limit: 64
+    environment:
+      MANAGEMENT_KEY_FILE: /run/secrets/management_key
+      CPA_URL: http://127.0.0.1:8317
+      INSIGHTS_DB: /data/usage.sqlite
+      INSIGHTS_BIND: 127.0.0.1
+      INSIGHTS_ALLOWED_ORIGINS: ${ADMIN_ORIGINS}
+    secrets: [management_key]
+    volumes: ["${INSTANCE_ROOT}/insights:/data"]
+    stop_grace_period: 30s
+    healthcheck:
+      test: [CMD, python, /opt/cpa/healthcheck.py, insights]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+  gateway:
+    <<: *security
+    user: "10001:10001"
+    image: cpa-personal-gateway:${PERSONAL_RELEASE}
+    build:
+      context: ..
+      dockerfile: deploy/containers/Gateway.Dockerfile
+      args: {CADDY_IMAGE: "${CADDY_IMAGE}"}
+    network_mode: service:network-owner
+    depends_on:
+      network-owner: {condition: service_healthy, restart: true}
+      cpa: {condition: service_healthy}
+      insights: {condition: service_healthy}
+    mem_limit: 192m
+    cpus: 0.50
+    pids_limit: 64
+    volumes:
+      - ./containers/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${INSTANCE_ROOT}/caddy-data:/data
+      - ${INSTANCE_ROOT}/caddy-config:/config
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/healthz]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+networks:
+  backend: {internal: true}
+  egress: {}
+secrets:
+  management_key:
+    file: ${INSTANCE_ROOT}/secrets/management.key
