@@ -34,7 +34,7 @@ network-owner更换后所有共享者需要一并重建；不要只替换网络�
 
 只为CPA设置TMPDIR=/run/cpa-plugin-tmp及96MiB上限的私有exec tmpfs，用于新版插件加载器的shadow副本。原/tmp保持noexec，其他容器不改变；该上限计入CPA内存预算，不是预先占满。不要把shadow目录放进插件扫描目录，也不要为此取消只读根文件系统。
 
-Personal.6及两套私人插件保持原版，不自动获得新SIWC页面或最新前端依赖。Linux amd64运行验收不等于arm64插件验收；arm64必须单独编译对应.so并验证。新增FreeTier配置前应确保配置为块状YAML，其插件配置解析器不能可靠读取JSON/flow节点；初始化模板的JSON格式虽被CPA接受，不应直接假设插件也完整支持。
+Personal.6及两套私人插件保持原版，不自动获得新SIWC页面或最新前端依赖。Linux amd64运行验收不等于arm64插件验收；arm64必须单独编译对应.so并验证。初始化工具使用Python标准库生成块状YAML，并为插件保留普通字段名；不依赖PyYAML。它只创建新实例，不转换或覆盖现有配置。手工添加FreeTier配置时也应避免JSON/flow节点，其简化解析器不完整支持这些格式。
 
 已有实例升级必须先备份配置/Auth/插件状态、用SQLite backup API创建一致快照，并确认请求空闲。仅重建CPA、保留稳定的network-owner、网关与统计容器；用旧镜像及旧Compose参数回滚代码，保留升级后新增统计，勿直接覆盖旧数据库。正式实例的密钥、代理、重试及账号配置不由此模板覆盖。后端升级不能保证修复所有HTTP/2 PROTOCOL_ERROR或SSH断线。
 

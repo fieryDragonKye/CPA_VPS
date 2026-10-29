@@ -6,6 +6,7 @@ import { parse as parseYaml, parseDocument } from 'yaml';
 import { useConfigStore, useNotificationStore } from '@/stores';
 import { configFileApi } from '@/services/api/configFile';
 import { apiClient } from '@/services/api/client';
+import { ConfigVersionUnavailableError } from '@/services/api/configVersion';
 import {
   applyConfigPatch,
   buildConfigPatch,
@@ -187,7 +188,7 @@ export function useConfigDocument({
     let writeAttempted = false;
     setSaving(true);
     try {
-      const latestServerYaml = await configFileApi.fetchConfigYaml();
+      const { content: latestServerYaml, etag } = await configFileApi.fetchConfigSnapshot();
       if (!operation.isCurrent()) return;
       if (latestServerYaml !== previewServerYaml) {
         const nextMergedYaml = !sourceDirty
@@ -222,9 +223,9 @@ export function useConfigDocument({
       if (previewMode === 'visual' && !previewPlan) return;
       writeAttempted = true;
       if (previewMode === 'visual' && previewPlan) {
-        await applyConfigPatch(previewPlan, operation.revision);
+        await applyConfigPatch(previewPlan, operation.revision, etag);
       } else {
-        await configFileApi.saveConfigYaml(mergedYaml);
+        await configFileApi.saveConfigYaml(mergedYaml, etag);
       }
       if (!operation.isCurrent()) return;
       useConfigStore.getState().clearCache();
@@ -267,8 +268,12 @@ export function useConfigDocument({
       }
     } catch (err: unknown) {
       if (!operation.isCurrent()) return;
-      const message =
-        err instanceof ConfigDraftConflictError
+      const versionConflict =
+        err instanceof ConfigVersionUnavailableError ||
+        (typeof err === 'object' && err !== null && 'status' in err && err.status === 412);
+      const message = versionConflict
+        ? t('config_management.concurrent_config_conflict')
+        : err instanceof ConfigDraftConflictError
           ? t('config_management.concurrent_list_conflict', { path: err.path.join('.') })
           : err instanceof Error
             ? err.message

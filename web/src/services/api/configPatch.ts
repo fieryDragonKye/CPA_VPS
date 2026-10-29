@@ -1,5 +1,6 @@
 import { isMap as isYamlMap, parseDocument } from 'yaml';
 import { apiClient } from './client';
+import { writeConfigChange } from './configVersion';
 
 export interface ConfigPatchPlan {
   patch: Record<string, unknown>;
@@ -238,7 +239,8 @@ export function hasConfigPatchChanges(plan: ConfigPatchPlan): boolean {
 
 export async function applyConfigPatch(
   plan: ConfigPatchPlan,
-  connectionRevision: number
+  connectionRevision: number,
+  etag?: string
 ): Promise<void> {
   const checkConnection = () => {
     if (apiClient.getConnectionRevision() !== connectionRevision) {
@@ -251,7 +253,7 @@ export async function applyConfigPatch(
   checkConnection();
   if (Object.keys(plan.patch).length) {
     try {
-      await apiClient.patch('/config', plan.patch);
+      etag = await writeConfigChange('patch', '/config', plan.patch, etag);
     } finally {
       checkConnection();
     }
@@ -259,7 +261,7 @@ export async function applyConfigPatch(
   for (const url of emptyMapUrls) {
     checkConnection();
     try {
-      await apiClient.put(url, {});
+      etag = await writeConfigChange('put', url, {}, etag);
     } finally {
       checkConnection();
     }
@@ -267,7 +269,7 @@ export async function applyConfigPatch(
   for (const url of urls) {
     checkConnection();
     try {
-      await apiClient.delete(url);
+      etag = await writeConfigChange('delete', url, undefined, etag);
     } catch (error: unknown) {
       if (!error || typeof error !== 'object' || !('status' in error) || error.status !== 404) {
         throw error;

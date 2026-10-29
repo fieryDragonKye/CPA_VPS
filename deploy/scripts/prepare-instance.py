@@ -3,9 +3,37 @@ from pathlib import Path
 import argparse
 import json
 import os
+import re
 import secrets
 
 ROOT=Path(__file__).resolve().parent.parent
+
+
+def block_yaml(value, indent=0):
+    """Serialize the initializer's JSON-shaped data as block YAML without dependencies."""
+    prefix=' '*indent
+    def scalar(item):
+        if item is None or isinstance(item,(str,bool,int,float)):
+            return json.dumps(item,ensure_ascii=False,allow_nan=False)
+        raise TypeError('Unsupported initializer scalar')
+    def nested(item):
+        return isinstance(item,(dict,list)) and bool(item)
+    lines=[]
+    if not value and isinstance(value,(dict,list)):
+        return prefix+('{}' if isinstance(value,dict) else '[]')+'\n'
+    if isinstance(value,dict):
+        for key,item in value.items():
+            if not isinstance(key,str):raise TypeError('Initializer keys must be strings')
+            plain=re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]*',key) and key.lower() not in {'true','false','null','yes','no','on','off','y','n'}
+            head=prefix+(key if plain else json.dumps(key,ensure_ascii=False))+':'
+            if nested(item):lines.extend([head,block_yaml(item,indent+2).rstrip('\n')])
+            else:lines.append(head+' '+('[]' if isinstance(item,list) else '{}' if isinstance(item,dict) else scalar(item)))
+    elif isinstance(value,list):
+        for item in value:
+            if nested(item):lines.extend([prefix+'-',block_yaml(item,indent+2).rstrip('\n')])
+            else:lines.append(prefix+'- '+('[]' if isinstance(item,list) else '{}' if isinstance(item,dict) else scalar(item)))
+    else:raise TypeError('Expected initializer mapping or list')
+    return '\n'.join(lines)+'\n'
 
 
 def prepare(destination, mode, port=8317):
@@ -33,8 +61,8 @@ def prepare(destination, mode, port=8317):
         'access':{'api-keys':[client]},'oauth':{'auth-dir':auth_path},'requests':{'proxy-url':''},
         'routing':{'retry':{'request-retry':1}},
         'observability':{'logs':{'logging-to-file':True,'request-log':False,'logs-max-total-size-mb':20,'error-logs-max-files':3},'usage':{'usage-statistics-enabled':True},'pprof':{'enable':False}}}
-    # JSON is valid YAML; retain v8 keys without a third-party YAML dependency.
-    (destination/'config/config.yaml').write_text(json.dumps(config,indent=2)+'\n',encoding='utf-8')
+    # Block mappings also work with plugins that do not traverse YAML flow nodes.
+    (destination/'config/config.yaml').write_text(block_yaml(config),encoding='utf-8')
     for name,value in [('management.key',admin),('client.key',client)]:
         (destination/'secrets'/name).write_text(value+'\n',encoding='utf-8')
     version=json.loads((ROOT/'lock.json').read_text())['bundleVersion']

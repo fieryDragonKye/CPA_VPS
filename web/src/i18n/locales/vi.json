@@ -1531,6 +1531,7 @@
     "source_changes_before_visual": "Lưu hoặc hủy các chỉnh sửa mã nguồn chưa lưu trước khi chuyển sang chế độ trực quan.",
     "precise_save_incomplete": "Quá trình lưu chính xác chưa hoàn tất; một số thay đổi có thể đã được áp dụng. Bản nháp của bạn được giữ lại. Hãy lưu lại để xem xét các khác biệt còn lại trên máy chủ.",
     "concurrent_list_conflict": "Danh sách trên máy chủ {{path}} đã thay đổi sau mốc cơ sở bản nháp của bạn. Thao tác lưu bị chặn để tránh ghi đè các thay đổi đó. Bản nháp của bạn được giữ lại; hãy ghi lại các chỉnh sửa, sau đó tải lại cấu hình và hợp nhất.",
+    "concurrent_config_conflict": "Cấu hình máy chủ đã thay đổi hoặc không thể xác nhận phiên bản. Đã dừng lưu để tránh ghi đè. Bản nháp được giữ lại; hãy kiểm tra cấu hình mới nhất trước khi lưu lại.",
     "precise_save_recovery_required": "Không thể đọc lại kết quả lưu. Đã tạm dừng chỉnh sửa. Lưu lại để khôi phục mốc cơ sở của bản nháp, hoặc tải lại cấu hình."
   },
   "quota_management": {

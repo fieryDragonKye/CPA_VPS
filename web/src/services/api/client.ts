@@ -240,6 +240,11 @@ class ApiClient {
     return this.instance.get(url, config);
   }
 
+  /** Preserve response headers for conditional configuration writes. */
+  async requestRaw(config: AxiosRequestConfig): Promise<AxiosResponse> {
+    return this.instance.request(config);
+  }
+
   /**
    * 发送 FormData
    */
