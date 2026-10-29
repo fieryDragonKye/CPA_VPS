@@ -37,7 +37,8 @@ def prepare(destination, mode, port=8317):
     (destination/'config/config.yaml').write_text(json.dumps(config,indent=2)+'\n',encoding='utf-8')
     for name,value in [('management.key',admin),('client.key',client)]:
         (destination/'secrets'/name).write_text(value+'\n',encoding='utf-8')
-    (destination/'instance.json').write_text(json.dumps({'mode':mode,'createdBy':'v8.0.23-personal.6-linux-ssh.2','port':port}),encoding='utf-8')
+    version=json.loads((ROOT/'lock.json').read_text())['bundleVersion']
+    (destination/'instance.json').write_text(json.dumps({'mode':mode,'createdBy':version,'port':port}),encoding='utf-8')
     if os.name=='posix':
         for p in destination.rglob('*'):
             p.chmod(0o700 if p.is_dir() else 0o600)

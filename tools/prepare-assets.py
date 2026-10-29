@@ -1,6 +1,6 @@
 """Stage locally built UI and checksum-verified CPA binaries, never upload data."""
 from pathlib import Path
-import argparse,hashlib,urllib.request,tarfile,shutil,tempfile
+import argparse,hashlib,json,urllib.request,tarfile,shutil,tempfile
 ROOT=Path(__file__).resolve().parent.parent
 def fetch(url):
     with urllib.request.urlopen(url,timeout=60) as response:return response.read()
@@ -10,8 +10,10 @@ def main():
     if not html.is_file():raise SystemExit('Build web first: bun run build')
     target=ROOT/'deploy/vendor'/('linux-'+a.arch)/'cli-proxy-api'
     if target.exists():raise SystemExit('Refusing to overwrite existing staged backend; review/remove it explicitly')
-    asset='CLIProxyAPI_8.0.23_linux_'+('aarch64' if a.arch=='arm64' else 'amd64')+'.tar.gz'
-    base='https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.23/'
+    lock=json.loads((ROOT/'deploy/lock.json').read_text())
+    version=lock['cpaVersion']
+    asset='CLIProxyAPI_'+version+'_linux_'+('aarch64' if a.arch=='arm64' else 'amd64')+'.tar.gz'
+    base='https://github.com/router-for-me/CLIProxyAPI/releases/download/v'+version+'/'
     sums=fetch(base+'checksums.txt').decode().splitlines()
     expected=next((l.split()[0] for l in sums if len(l.split())==2 and l.split()[1].lstrip('*')==asset),None)
     if not expected:raise SystemExit('No matching official checksum')
@@ -25,5 +27,5 @@ def main():
             binary=archive.extractfile(members[0]).read()
     target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(binary);target.chmod(0o755)
     assets=ROOT/'deploy/assets';assets.mkdir(exist_ok=True);shutil.copyfile(html,assets/'management.html')
-    print('Verified CPA 8.0.23 and built UI staged locally. No instance credentials imported.')
+    print('Verified CPA '+version+' and built UI staged locally. No instance credentials imported.')
 if __name__=='__main__':main()

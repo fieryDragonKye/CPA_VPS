@@ -4,7 +4,7 @@
 
 | 组件 | 来源 | 本目录许可 |
 | --- | --- | --- |
-| CPA后端8.0.23 | https://github.com/router-for-me/CLIProxyAPI/tree/v8.0.23 | licenses/CPA-LICENSE；程序不随Git提交，按校验和下载 |
+| CPA后端8.0.47 | https://github.com/router-for-me/CLIProxyAPI/tree/v8.0.47 | licenses/CPA-LICENSE；程序不随Git提交，按校验和下载 |
 | Web UI | https://github.com/router-for-me/Cli-Proxy-API-Management-Center | web/LICENSE、licenses/Frontend-LICENSE，保留MIT通知 |
 | Codex插件原版0.4.4 | https://github.com/haowang02/cpa-plugin-codex-candy-eval/tree/v0.4.4 | plugin/LICENSE，MIT |
 | FreeTier 2API原版0.1.21 | https://github.com/jiandanc/CLIProxyAPI-freetier2api-plugin/tree/v0.1.21 | plugin-freetier/LICENSE，MIT |

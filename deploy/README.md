@@ -3,7 +3,7 @@
 这是供新实例使用的源码模板，不是原VPS文件镜像。不要在现有生产目录直接执行初始化。
 
 1. 用Node24/Bun1.3.14构建web，设置VERSION=v8.0.23-personal.6。
-2. 仓库根运行 `python tools/prepare-assets.py --arch amd64`（arm64主机选arm64）。工具下载CPA v8.0.23，验证官方checksums，仅提取程序；生成的vendor、assets均被Git忽略。
+2. 仓库根运行 `python tools/prepare-assets.py --arch amd64`（arm64主机选arm64）。工具按lock.json下载CPA v8.0.47普通插件支持包，验证官方checksums，仅提取程序；生成的vendor、assets均被Git忽略。不要选择no-plugin包。
 3. Docker基础镜像来源固定在lock.json，不使用latest；先拉取两个对应reference。没有网络时可在可信环境核对digest后离线docker load，不修改全局网络规则绕过问题。
 4. 在Linux空目录初始化：
 
@@ -29,6 +29,14 @@ ssh -N -T -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCo
 首次启动不预装任何第三方插件、不导入OAuth或代理。需要私人插件时，先在兼容环境构建plugin，备份后放入实例plugins/linux/对应架构，设置全局插件开关与对应store.version/release-tag。不要混用同ID的多个库。官方商店更新可能覆盖私人主题。
 
 network-owner更换后所有共享者需要一并重建；不要只替换网络锚点。CPA单容器在锚点保持时可以受控重启，但必须确认没有活跃请求。Compose的unless-stopped支持Docker启动后恢复；宿主Docker自启由服务器管理员配置。
+
+## 后端8.0.47兼容性
+
+只为CPA设置TMPDIR=/run/cpa-plugin-tmp及96MiB上限的私有exec tmpfs，用于新版插件加载器的shadow副本。原/tmp保持noexec，其他容器不改变；该上限计入CPA内存预算，不是预先占满。不要把shadow目录放进插件扫描目录，也不要为此取消只读根文件系统。
+
+Personal.6及两套私人插件保持原版，不自动获得新SIWC页面或最新前端依赖。Linux amd64运行验收不等于arm64插件验收；arm64必须单独编译对应.so并验证。新增FreeTier配置前应确保配置为块状YAML，其插件配置解析器不能可靠读取JSON/flow节点；初始化模板的JSON格式虽被CPA接受，不应直接假设插件也完整支持。
+
+已有实例升级必须先备份配置/Auth/插件状态、用SQLite backup API创建一致快照，并确认请求空闲。仅重建CPA、保留稳定的network-owner、网关与统计容器；用旧镜像及旧Compose参数回滚代码，保留升级后新增统计，勿直接覆盖旧数据库。正式实例的密钥、代理、重试及账号配置不由此模板覆盖。后端升级不能保证修复所有HTTP/2 PROTOCOL_ERROR或SSH断线。
 
 ## 备份恢复
 

@@ -1,6 +1,6 @@
 # FreeTier 2API 私人版部署
 
-版本：CPA v8.0.23、FreeTier `0.1.21-personal.1`。这是可选插件，不随 Compose 模板自动启用，不需要独立的 Node/Python 服务。账号需用户自行添加；安装不导入其他账号，不自动发起模型测试。
+版本：CPA v8.0.47、FreeTier `0.1.21-personal.1`。这是可选插件，不随 Compose 模板自动启用，不需要独立的 Node/Python 服务。账号需用户自行添加；安装不导入其他账号，不自动发起模型测试。
 
 ## 配置与持久化
 
