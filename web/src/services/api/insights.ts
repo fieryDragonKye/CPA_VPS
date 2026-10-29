@@ -35,6 +35,8 @@ export interface UsageEvent {
   total_tokens: number;
   endpoint: string;
   estimated_cost: number | null;
+  pricing_basis?: string | null;
+  long_context_applied?: number;
 }
 
 export interface UsageSummary {
@@ -62,6 +64,18 @@ export interface ModelPrice {
   input: number;
   output: number;
   cache: number;
+  basis?: string;
+  source_url?: string;
+  verified_at?: string;
+}
+
+export interface PricingPreset {
+  id: string;
+  currency: string;
+  speed: string;
+  verified_at: string;
+  long_context_threshold: number;
+  models: ModelPrice[];
 }
 
 // Keep bearer handling and connection isolation in the existing API client.
@@ -95,6 +109,16 @@ export function insightsApi(apiBase: string) {
     events: (params: UsageQuery) =>
       read<{ rows: UsageEvent[]; total: number; page_size: number }>('events', params),
     prices: () => read<ModelPrice[]>('prices'),
+    pricingPreset: () => read<PricingPreset>('pricing-preset'),
+    importPricePreset: async (preset: string) => {
+      const result = await apiClient.post<{ saved?: boolean; imported: number }>(
+        `${base}prices/import`,
+        { preset },
+        { validateStatus: acceptedByCompanion }
+      );
+      if (result.saved !== true) throw new Error('Usage companion request failed');
+      return result;
+    },
     savePrice: async (data: ModelPrice) => {
       const result = await apiClient.post<{ saved?: boolean }>(`${base}prices`, data, {
         validateStatus: acceptedByCompanion,

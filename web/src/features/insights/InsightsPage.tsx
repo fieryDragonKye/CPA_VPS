@@ -10,12 +10,13 @@ import {
   insightsApi,
   type KeeperStatus,
   type ModelPrice,
+  type PricingPreset,
   type UsageEvent,
   type UsageQuery,
   type UsageSummary,
 } from '@/services/api/insights';
 import styles from './InsightsPage.module.scss';
-import { formatTtft } from './metrics';
+import { formatEstimatedCost as money, formatTtft } from './metrics';
 
 const initialQuery: UsageQuery = {
   range: '24h',
@@ -29,7 +30,6 @@ const initialQuery: UsageQuery = {
 const number = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 1 });
 const compact = (value: number) =>
   value.toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 2 });
-const money = (value: number | null) => (value === null ? '—' : `$${value.toFixed(4)}`);
 const clock = (value: string | null) => (value ? new Date(value).toLocaleString() : '—');
 
 export function InsightsPage() {
@@ -44,6 +44,7 @@ export function InsightsPage() {
   const [events, setEvents] = useState<UsageEvent[]>([]);
   const [eventCount, setEventCount] = useState(0);
   const [prices, setPrices] = useState<ModelPrice[]>([]);
+  const [pricingPreset, setPricingPreset] = useState<PricingPreset | null>(null);
   const [price, setPrice] = useState<ModelPrice>({ model: '', input: 0, output: 0, cache: 0 });
   const [accounts, setAccounts] = useState<number | null>(null);
   const [error, setError] = useState('');
@@ -59,11 +60,12 @@ export function InsightsPage() {
       request === sequence.current && revision === apiClient.getConnectionRevision();
     setBusy(true);
     try {
-      const [nextSummary, nextStatus, nextEvents, nextPrices] = await Promise.all([
+      const [nextSummary, nextStatus, nextEvents, nextPrices, nextPreset] = await Promise.all([
         api.summary(query),
         api.status(),
         api.events(query),
         api.prices(),
+        api.pricingPreset().catch(() => null),
       ]);
       if (!current()) return;
       setSummary(nextSummary);
@@ -71,6 +73,7 @@ export function InsightsPage() {
       setEvents(nextEvents.rows);
       setEventCount(nextEvents.total);
       setPrices(nextPrices);
+      setPricingPreset(nextPreset);
       setError('');
     } catch {
       if (current()) setError(t('insights.unavailable'));
@@ -85,6 +88,8 @@ export function InsightsPage() {
     setEvents([]);
     setEventCount(0);
     setPrices([]);
+    setPricingPreset(null);
+    setPrice({ model: '', input: 0, output: 0, cache: 0 });
     setAccounts(null);
     setError('');
   }, [apiBase]);
@@ -177,6 +182,22 @@ export function InsightsPage() {
       await api.savePrice(price);
       if (revision !== apiClient.getConnectionRevision()) return;
       setNotice(t('insights.saved'));
+      await refresh();
+    } catch {
+      if (revision === apiClient.getConnectionRevision()) setNotice(t('insights.actionFailed'));
+    } finally {
+      if (revision === apiClient.getConnectionRevision()) setBusy(false);
+    }
+  };
+
+  const importPrices = async () => {
+    if (!pricingPreset) return;
+    const revision = apiClient.getConnectionRevision();
+    setBusy(true);
+    try {
+      const result = await api.importPricePreset(pricingPreset.id);
+      if (revision !== apiClient.getConnectionRevision()) return;
+      setNotice(t('insights.importedPrices', { count: result.imported }));
       await refresh();
     } catch {
       if (revision === apiClient.getConnectionRevision()) setNotice(t('insights.actionFailed'));
@@ -317,7 +338,7 @@ export function InsightsPage() {
           <span className={styles.metricGlyph}>✓</span>
         </article>
         <article>
-          <span>{t('insights.cost')}</span>
+          <span title={t('insights.costHint')}>{t('insights.cost')}</span>
           <strong>{money(summary?.estimated_cost ?? null)}</strong>
           <small>
             {t('insights.coverage', {
@@ -572,7 +593,13 @@ export function InsightsPage() {
                       <th
                         key={field}
                         scope="col"
-                        title={field === 'ttft' ? t('insights.ttftHint') : undefined}
+                        title={
+                          field === 'ttft'
+                            ? t('insights.ttftHint')
+                            : field === 'cost'
+                              ? t('insights.costHint')
+                              : undefined
+                        }
                       >
                         {t(`insights.${field}`)}
                       </th>
@@ -626,6 +653,20 @@ export function InsightsPage() {
               </div>
             </div>
             <p className={styles.subtle}>{t('insights.priceHint')}</p>
+            <p className={styles.subtle}>{t('insights.costHint')}</p>
+            {pricingPreset && (
+              <div className={styles.presetBanner}>
+                <div>
+                  <strong>{t('insights.officialRates')}</strong>
+                  <p className={styles.subtle}>
+                    {t('insights.presetHint', { date: pricingPreset.verified_at })}
+                  </p>
+                </div>
+                <Button onClick={() => void importPrices()} loading={busy}>
+                  {t('insights.importOfficial')}
+                </Button>
+              </div>
+            )}
             <form
               onSubmit={(event) => {
                 event.preventDefault();
@@ -641,7 +682,15 @@ export function InsightsPage() {
                   maxLength={120}
                   onChange={(event) => {
                     const existing = prices.find((item) => item.model === event.target.value);
-                    setPrice(existing ?? { ...price, model: event.target.value });
+                    setPrice(
+                      existing ?? {
+                        model: event.target.value,
+                        input: 0,
+                        output: 0,
+                        cache: 0,
+                        basis: 'manual',
+                      }
+                    );
                   }}
                 />
                 <datalist id="insights-model-options">
@@ -666,7 +715,13 @@ export function InsightsPage() {
                     required
                     value={price[field]}
                     onChange={(event) =>
-                      setPrice((previous) => ({ ...previous, [field]: Number(event.target.value) }))
+                      setPrice((previous) => ({
+                        ...previous,
+                        [field]: Number(event.target.value),
+                        basis: 'manual',
+                        source_url: undefined,
+                        verified_at: undefined,
+                      }))
                     }
                   />
                 </label>
@@ -690,6 +745,7 @@ export function InsightsPage() {
                         {t(`insights.price.${field}`)}
                       </th>
                     ))}
+                    <th scope="col">{t('insights.priceSource')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -703,6 +759,15 @@ export function InsightsPage() {
                       <td>${item.input}</td>
                       <td>${item.output}</td>
                       <td>${item.cache}</td>
+                      <td>
+                        {item.source_url?.startsWith('https://developers.openai.com/') ? (
+                          <a href={item.source_url} target="_blank" rel="noreferrer">
+                            {t('insights.officialRates')} · {item.verified_at}
+                          </a>
+                        ) : (
+                          t('insights.manualRates')
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -756,7 +821,11 @@ function EventRow({
             {t(event.failed ? 'insights.failed' : 'insights.success')}
           </span>
         </td>
-        <td>
+        <td
+          title={t(
+            event.long_context_applied ? 'insights.longContextApplied' : 'insights.costHint'
+          )}
+        >
           {event.estimated_cost === null ? t('insights.unpriced') : money(event.estimated_cost)}
         </td>
         <td>

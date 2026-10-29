@@ -98,6 +98,9 @@ def normalize(record: object) -> dict | None:
     return item
 
 
+PRICE_PRESET = json.loads(Path(__file__).with_name('pricing.json').read_text(encoding='utf-8'))
+
+
 class Store:
     def __init__(self, path: Path):
         self.path = path
@@ -115,6 +118,9 @@ class Store:
                 CREATE TABLE IF NOT EXISTS prices (
                   model TEXT PRIMARY KEY, input REAL NOT NULL, output REAL NOT NULL,
                   cache REAL NOT NULL, updated TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS price_rules (
+                  model TEXT PRIMARY KEY, basis TEXT NOT NULL,
+                  input REAL NOT NULL, output REAL NOT NULL, cache REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(events)")}
@@ -154,8 +160,21 @@ class Store:
         return " AND ".join(clauses), args
 
     @staticmethod
+    def price_rule_join() -> str:
+        # Legacy writers can still use the original five-column prices table. If their
+        # prices change, stale reference metadata must not keep applying a surcharge.
+        return "LEFT JOIN price_rules r ON r.model=p.model AND r.input=p.input AND r.output=p.output AND r.cache=p.cache"
+
+    @staticmethod
+    def long_context_sql() -> str:
+        return f"(r.basis='{PRICE_PRESET['id']}' AND e.input_tokens>{PRICE_PRESET['long_context_threshold']})"
+
+    @staticmethod
     def cost_sql() -> str:
-        return "(MAX(e.input_tokens - MIN(e.cached_tokens,e.input_tokens),0)*p.input + e.output_tokens*p.output + MIN(e.cached_tokens,e.input_tokens)*p.cache)/1000000.0"
+        long = Store.long_context_sql()
+        input_factor = f"(CASE WHEN {long} THEN {PRICE_PRESET['long_input_multiplier']} ELSE 1 END)"
+        output_factor = f"(CASE WHEN {long} THEN {PRICE_PRESET['long_output_multiplier']} ELSE 1 END)"
+        return f"((MAX(e.input_tokens - MIN(e.cached_tokens,e.input_tokens),0)*p.input + MIN(e.cached_tokens,e.input_tokens)*p.cache)*{input_factor} + e.output_tokens*p.output*{output_factor})/1000000.0"
 
     def summary(self, query: dict) -> dict:
         where, args = self.where(query)
@@ -165,7 +184,7 @@ class Store:
               COALESCE(SUM(e.reasoning_tokens),0) reasoning_tokens, COALESCE(SUM(e.cached_tokens),0) cached_tokens,
               COALESCE(SUM(e.total_tokens),0) total_tokens, AVG(e.latency_ms) latency_ms,
               SUM({self.cost_sql()}) estimated_cost, COUNT(p.model) priced_requests
-              FROM events e LEFT JOIN prices p ON p.model=e.model WHERE {where}""", args).fetchone())
+              FROM events e LEFT JOIN prices p ON p.model=e.model {self.price_rule_join()} WHERE {where}""", args).fetchone())
             row["success_rate"] = (row["requests"] - row["failures"]) / row["requests"] * 100 if row["requests"] else None
             # Local date grouping is done by the browser; buckets are UTC and unambiguous.
             row["trend"] = [dict(r) for r in db.execute(f"""SELECT substr(e.timestamp,1,13)||':00:00+00:00' timestamp,
@@ -189,13 +208,34 @@ class Store:
             count = db.execute(f"SELECT COUNT(*) FROM events e WHERE {where}", args).fetchone()[0]
             rows = [dict(r) for r in db.execute(f"""SELECT e.timestamp,e.model,e.alias,e.provider,e.source,e.client,e.failed,
               e.latency_ms,e.ttft_ms,e.input_tokens,e.output_tokens,e.reasoning_tokens,e.cached_tokens,e.total_tokens,e.endpoint,
-              {self.cost_sql()} estimated_cost FROM events e LEFT JOIN prices p ON p.model=e.model
+              {self.cost_sql()} estimated_cost, CASE WHEN p.model IS NOT NULL THEN COALESCE(r.basis,'manual') END pricing_basis,
+              CASE WHEN {self.long_context_sql()} THEN 1 ELSE 0 END long_context_applied
+              FROM events e LEFT JOIN prices p ON p.model=e.model {self.price_rule_join()}
               WHERE {where} ORDER BY e.timestamp DESC,e.id DESC LIMIT ? OFFSET ?""", [*args, size, 0 if export else (page - 1) * size])]
         return {"rows": rows, "total": count, "page": page, "page_size": size}
 
     def prices(self) -> list:
         with self.connect() as db:
-            return [dict(r) for r in db.execute("SELECT * FROM prices ORDER BY model")]
+            rows = [dict(r) for r in db.execute(f"SELECT p.*,COALESCE(r.basis,'manual') basis FROM prices p {self.price_rule_join()} ORDER BY p.model")]
+        sources = {p['model']: p for p in PRICE_PRESET['models']}
+        for row in rows:
+            if row['basis'] == PRICE_PRESET['id'] and row['model'] in sources:
+                row.update(source_url=sources[row['model']]['source_url'], verified_at=PRICE_PRESET['verified_at'])
+        return rows
+
+    def import_price_preset(self, preset: str) -> int:
+        if preset != PRICE_PRESET['id']:
+            raise ValueError('unknown preset')
+        with self.connect() as db:
+            imported = 0
+            for row in PRICE_PRESET['models']:
+                cursor = db.execute("INSERT OR IGNORE INTO prices(model,input,output,cache,updated) VALUES(?,?,?,?,?)",
+                                    [row['model'],row['input'],row['output'],row['cache'],datetime.now(timezone.utc).isoformat()])
+                if cursor.rowcount:
+                    db.execute("INSERT OR REPLACE INTO price_rules VALUES(?,?,?,?,?)",
+                               [row['model'],preset,row['input'],row['output'],row['cache']])
+                    imported += 1
+            return imported
 
     def save_price(self, data: dict):
         model = str(data.get("model") or "").strip()
@@ -204,8 +244,19 @@ class Store:
         prices = [float(data[k]) for k in ("input", "output", "cache")]
         if any(not math.isfinite(p) or p < 0 or p > 100000 for p in prices):
             raise ValueError("invalid price")
+        basis = data.get('basis') or 'manual'
+        if basis not in ('manual', PRICE_PRESET['id']):
+            raise ValueError('invalid pricing basis')
+        if basis == PRICE_PRESET['id']:
+            official = next((p for p in PRICE_PRESET['models'] if p['model'] == model), None)
+            if not official or prices != [official[k] for k in ('input','output','cache')]:
+                raise ValueError('official rates changed; save as manual')
         with self.connect() as db:
-            db.execute("INSERT OR REPLACE INTO prices VALUES (?,?,?,?,?)", [model, *prices, datetime.now(timezone.utc).isoformat()])
+            db.execute("INSERT OR REPLACE INTO prices(model,input,output,cache,updated) VALUES (?,?,?,?,?)",
+                       [model, *prices, datetime.now(timezone.utc).isoformat()])
+            db.execute("DELETE FROM price_rules WHERE model=?", [model])
+            if basis == PRICE_PRESET['id']:
+                db.execute("INSERT INTO price_rules VALUES(?,?,?,?,?)", [model,basis,*prices])
 
     def prune(self):
         with self.connect() as db:
@@ -336,10 +387,12 @@ def make_handler(keeper: Keeper, page: Path):
                     return self.respond(keeper.store.events(query))
                 if route == "prices":
                     return self.respond(keeper.store.prices())
+                if route == "pricing-preset":
+                    return self.respond(PRICE_PRESET)
                 if route == "export":
                     records = keeper.store.events(query, export=True)
                     output = io.StringIO()
-                    fields = ["timestamp", "model", "provider", "source", "client", "failed", "latency_ms", "ttft_ms", "input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens", "total_tokens", "estimated_cost"]
+                    fields = ["timestamp", "model", "provider", "source", "client", "failed", "latency_ms", "ttft_ms", "input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens", "total_tokens", "estimated_cost", "pricing_basis", "long_context_applied"]
                     writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
                     writer.writeheader()
                     for row in records["rows"]:
@@ -355,14 +408,19 @@ def make_handler(keeper: Keeper, page: Path):
         def do_POST(self):
             if not self.origin_ok():
                 return self.respond({"error": "origin_not_allowed"}, 403)
-            if self.path == API + "prices":
+            if self.path in (API + "prices", API + "prices/import"):
                 if not self.authorized():
                     return self.respond({"error": "unauthorized"}, 401)
                 try:
                     size = int(self.headers.get("Content-Length", "0"))
                     if size > 4096 or size <= 0:
                         raise ValueError("invalid size")
-                    keeper.store.save_price(json.loads(self.rfile.read(size)))
+                    data = json.loads(self.rfile.read(size))
+                    if not isinstance(data, dict):
+                        raise ValueError('expected object')
+                    if self.path == API + 'prices/import':
+                        return self.respond({'saved': True, 'imported': keeper.store.import_price_preset(data.get('preset'))})
+                    keeper.store.save_price(data)
                     return self.respond({"saved": True})
                 except (ValueError, KeyError, TypeError):
                     return self.respond({"error": "invalid_price"}, 400)
