@@ -17,6 +17,8 @@ Ubuntu22.04/glibc2.35已用于当前amd64私人插件构建；Debian Bookworm运
 ```sh
 # 仓库根，已安装Go与gcc
 sh tools/build-plugin.sh
+# 可选的 FreeTier 私人插件
+sh tools/build-freetier-plugin.sh
 ```
 
 正式替换.so之前：备份原库、插件历史JSON、配置；核对store.version/release-tag与文件内版本一致；确认无活跃请求；按平台能力热更新或只重启CPA。不要原位覆盖正被加载的库。

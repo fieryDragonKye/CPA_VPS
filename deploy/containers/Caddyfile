@@ -10,8 +10,8 @@ http://:8080 {
     handle /v8/management/extensions/insights/* {
         reverse_proxy 127.0.0.1:8320
     }
-    # Only routes used by this interface and its installed private plugin.
-    @management path /management.html /v8/management /v8/management/* /v1/models /v1/responses /v0/resource/plugins/cpa-codex-candy-eval /v0/resource/plugins/cpa-codex-candy-eval/* /v0/management/plugins/cpa-codex-candy-eval /v0/management/plugins/cpa-codex-candy-eval/* /v0/management/config /v0/management/auth-files/models /v0/management/auth-files/status
+    # Only routes used by this interface and its optional private plugins.
+    @management path /management.html /v8/management /v8/management/* /v1/models /v1/responses /v0/resource/plugins/cpa-codex-candy-eval /v0/resource/plugins/cpa-codex-candy-eval/* /v0/management/plugins/cpa-codex-candy-eval /v0/management/plugins/cpa-codex-candy-eval/* /v0/management/config /v0/management/auth-files/models /v0/management/auth-files/status /v0/resource/plugins/freetier2api /v0/resource/plugins/freetier2api/* /v0/management/plugins/freetier2api /v0/management/plugins/freetier2api/* /v0/management/freetier-auth-url /v0/management/get-auth-status
     handle @management {
         reverse_proxy 127.0.0.1:8317
     }

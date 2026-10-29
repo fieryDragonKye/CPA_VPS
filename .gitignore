@@ -39,6 +39,11 @@ __pycache__/
 /deploy/assets/
 /runtime/
 /artifacts/
+/plugin-freetier/freetier2api-plugin
+/plugin-freetier/state.json
+/plugin-freetier/models.json
+/plugin-freetier/machine_salt
+/plugin-freetier/tmp/
 .DS_Store
 Thumbs.db
 .vscode/

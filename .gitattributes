@@ -1,4 +1,7 @@
 * text=auto eol=lf
+## Embedded upstream assets retain exact release bytes; Go source still uses LF.
+plugin-freetier/internal/admin/console.html -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+plugin-freetier/internal/vendors/**/assets/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 *.sh text eol=lf
 *.ps1 text eol=crlf
 *.cmd text eol=crlf

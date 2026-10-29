@@ -31,6 +31,15 @@ jobs:
       - run: node scripts/test-ui.cjs
         working-directory: plugin
       - run: sh tools/build-plugin.sh
+  freetier-plugin:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.13'
+          cache: false
+      - run: sh tools/build-freetier-plugin.sh
   python:
     runs-on: ubuntu-24.04
     steps:

@@ -5,6 +5,7 @@ CPA v8.0.23 的私人管理界面（Personal.6）、统计服务、私人主题�
 ```text
 web/       React 管理界面；默认通过同源私有网关访问统计服务
 plugin/    Codex 降智测试 0.4.4-personal.1，保留上游测试逻辑
+plugin-freetier/ FreeTier 2API 0.1.21-personal.1，私人界面与上游供应商实现
 insights/  Python 标准库统计服务，SQLite 持久化
 deploy/    Linux Docker Compose，回环监听、独立数据目录
 skills/    四套可单独安装、仅显式调用的 Codex Skills
@@ -42,7 +43,7 @@ go vet ./...
 go test -race ./...
 ```
 
-Linux/WSL 编译：`sh tools/build-plugin.sh`。见[环境说明](docs/ENVIRONMENTS.md)。
+Linux/WSL 编译：`sh tools/build-plugin.sh`；FreeTier 插件用 `sh tools/build-freetier-plugin.sh`。见[环境说明](docs/ENVIRONMENTS.md)及[FreeTier 安装说明](docs/FREETIER.md)。
 
 Linux部署见[部署说明](deploy/README.md)，Skills见[安装说明](skills/README.md)。本仓库不自动安装插件、不导入OAuth、不建立代理订阅、不创建公网入口。
 
