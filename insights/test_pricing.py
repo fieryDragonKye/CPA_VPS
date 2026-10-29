@@ -21,7 +21,10 @@ class PricingTests(unittest.TestCase):
 
     def test_import_is_idempotent_and_preserves_custom_prices(self):
         self.store.save_price({'model': 'gpt-6.1-sol', 'input': 7, 'output': 8, 'cache': 9})
-        self.assertEqual(self.store.import_price_preset(PRICE_PRESET['id']), len(PRICE_PRESET['models'])-1)
+        self.assertEqual(
+            self.store.import_price_preset(PRICE_PRESET['id']),
+            len(PRICE_PRESET['models']) - 1,
+        )
         self.assertEqual(self.store.import_price_preset(PRICE_PRESET['id']), 0)
         rows = {p['model']: p for p in self.store.prices()}
         self.assertEqual(rows['gpt-6.1-sol']['input'], 7)
@@ -33,7 +36,15 @@ class PricingTests(unittest.TestCase):
 
     def test_normal_request_prices_cache_once_and_does_not_add_reasoning_again(self):
         self.store.import_price_preset(PRICE_PRESET['id'])
-        self.store.ingest([event(model='gpt-6.1-sol', tokens={'input_tokens': 10000, 'cached_tokens': 8000, 'output_tokens': 1000, 'reasoning_tokens': 600})])
+        self.store.ingest([
+            event(
+                model='gpt-6.1-sol',
+                tokens={
+                    'input_tokens': 10000, 'cached_tokens': 8000,
+                    'output_tokens': 1000, 'reasoning_tokens': 600,
+                },
+            )
+        ])
         row = self.store.events({})['rows'][0]
         self.assertAlmostEqual(row['estimated_cost'], 0.0148)
         self.assertEqual(row['long_context_applied'], 0)
@@ -42,17 +53,30 @@ class PricingTests(unittest.TestCase):
     def test_threshold_is_strict_and_surcharge_applies_to_the_whole_request(self):
         self.store.import_price_preset(PRICE_PRESET['id'])
         for index, count in enumerate([272000, 272001]):
-            self.store.ingest([event(model='gpt-6.1-sol', request_id=f'long-{index}', tokens={'input_tokens': count, 'cached_tokens': count, 'output_tokens': 1000})])
+            self.store.ingest([
+                event(
+                    model='gpt-6.1-sol', request_id=f'long-{index}',
+                    tokens={
+                        'input_tokens': count, 'cached_tokens': count,
+                        'output_tokens': 1000,
+                    },
+                )
+            ])
         rows = {r['input_tokens']: r for r in self.store.events({})['rows']}
-        self.assertAlmostEqual(rows[272000]['estimated_cost'], .0272+.01)
-        self.assertAlmostEqual(rows[272001]['estimated_cost'], .0272001*2+.01*1.5)
+        self.assertAlmostEqual(rows[272000]['estimated_cost'], 0.0272 + 0.01)
+        self.assertAlmostEqual(rows[272001]['estimated_cost'], 0.0272001 * 2 + 0.01 * 1.5)
         self.assertEqual(rows[272001]['long_context_applied'], 1)
 
     def test_manual_rates_do_not_inherit_official_multipliers(self):
         self.store.save_price({'model': 'gpt-6.1-sol', 'input': 2, 'output': 10, 'cache': .1})
-        self.store.ingest([event(model='gpt-6.1-sol', tokens={'input_tokens': 300000, 'output_tokens': 1000})])
+        self.store.ingest([
+            event(
+                model='gpt-6.1-sol',
+                tokens={'input_tokens': 300000, 'output_tokens': 1000},
+            )
+        ])
         row = self.store.events({})['rows'][0]
-        self.assertAlmostEqual(row['estimated_cost'], .61)
+        self.assertAlmostEqual(row['estimated_cost'], 0.61)
         self.assertEqual(row['long_context_applied'], 0)
 
     def test_unknown_aliases_remain_unpriced_and_explicit_free_rates_remain_zero(self):
@@ -66,12 +90,14 @@ class PricingTests(unittest.TestCase):
 
     def test_official_label_cannot_be_attached_to_modified_rates(self):
         data = {'model': 'gpt-6.1-sol', 'input': 99, 'output': 10, 'cache': .1, 'basis': PRICE_PRESET['id']}
-        with self.assertRaises(ValueError):self.store.save_price(data)
-        data['basis'] = 'manual';self.store.save_price(data)
+        with self.assertRaises(ValueError):
+            self.store.save_price(data)
+        data['basis'] = 'manual'
+        self.store.save_price(data)
         self.assertEqual(self.store.prices()[0]['basis'], 'manual')
 
     def test_legacy_prices_migrate_without_repricing_or_changing_events(self):
-        path = Path(self.temp.name)/'legacy.sqlite'
+        path = Path(self.temp.name) / 'legacy.sqlite'
         with sqlite3.connect(path) as db:
             db.execute('CREATE TABLE prices(model TEXT PRIMARY KEY,input REAL,output REAL,cache REAL,updated TEXT)')
             db.execute('INSERT INTO prices VALUES(?,?,?,?,?)', ['gpt-6.1-sol', 3, 4, 5, 'old-date'])
@@ -93,28 +119,39 @@ class PricingTests(unittest.TestCase):
 class PricingHttpTests(unittest.TestCase):
     setUp = fixtures.HttpTests.setUp
     tearDown = fixtures.HttpTests.tearDown
+
     def post(self, route, data, key='test-key'):
-        request = urllib.request.Request(self.url+API+route, data=json.dumps(data).encode(),
-            headers={'Authorization':'Bearer '+key, 'Content-Type':'application/json'})
+        request = urllib.request.Request(
+            self.url + API + route,
+            data=json.dumps(data).encode(),
+            headers={
+                'Authorization': 'Bearer ' + key,
+                'Content-Type': 'application/json',
+            },
+        )
         return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request)
 
     def test_import_requires_authentication_and_is_idempotent(self):
         with self.assertRaises(urllib.error.HTTPError) as error:
-            self.post('prices/import', {'preset':PRICE_PRESET['id']}, key='invalid')
+            self.post('prices/import', {'preset': PRICE_PRESET['id']}, key='invalid')
         self.assertEqual(error.exception.code, 401)
-        with self.post('prices/import', {'preset':PRICE_PRESET['id']}) as response:
+        with self.post('prices/import', {'preset': PRICE_PRESET['id']}) as response:
             self.assertEqual(json.load(response)['imported'], len(PRICE_PRESET['models']))
-        with self.post('prices/import', {'preset':PRICE_PRESET['id']}) as response:
+        with self.post('prices/import', {'preset': PRICE_PRESET['id']}) as response:
             self.assertEqual(json.load(response)['imported'], 0)
 
     def test_invalid_import_payloads_are_rejected_without_writes(self):
-        for payload in [[], {'preset':'unknown'}]:
-            with self.assertRaises(urllib.error.HTTPError) as error:self.post('prices/import', payload)
+        for payload in [[], {'preset': 'unknown'}]:
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                self.post('prices/import', payload)
             self.assertEqual(error.exception.code, 400)
         self.assertEqual(self.store.prices(), [])
 
     def test_reference_metadata_is_available_only_with_management_auth(self):
-        request = urllib.request.Request(self.url+API+'pricing-preset',headers={'Authorization':'Bearer test-key'})
+        request = urllib.request.Request(
+            self.url + API + 'pricing-preset',
+            headers={'Authorization': 'Bearer test-key'},
+        )
         with urllib.request.urlopen(request) as response:
             data = json.load(response)
         self.assertEqual(data['currency'], 'USD')

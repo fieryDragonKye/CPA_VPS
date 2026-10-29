@@ -2,11 +2,41 @@
 **/node_modules
 **/__pycache__
 **/.env
+**/.env.*
+**/auths
+**/secrets
+**/config.yaml
+**/auth.json
+**/credentials.json
+**/backups
+**/screenshots
+**/*.key
+**/*.pem
+**/*.pfx
+**/*.sqlite*
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.log
+**/*.py[cod]
+**/*.so
+**/*.dll
+**/*.dylib
+**/*.mp4
+**/*.zip
+**/*.tar
+**/*.tar.gz
+**/*.exe
 runtime
 artifacts
 docs
 skills
 web/*
 plugin
+plugin-freetier
 !web/LICENSE
 tools
+# Keep only runtime statistics modules/data in this build context.
+insights/test_*.py
+# deploy/assets/management.html and deploy/vendor/linux-*/cli-proxy-api
+# are intentional build inputs; do not exclude their parent directories.

@@ -98,7 +98,9 @@ def normalize(record: object) -> dict | None:
     return item
 
 
-PRICE_PRESET = json.loads(Path(__file__).with_name('pricing.json').read_text(encoding='utf-8'))
+PRICE_PRESET = json.loads(
+    Path(__file__).with_name("pricing.json").read_text(encoding="utf-8")
+)
 
 
 class Store:
@@ -163,7 +165,10 @@ class Store:
     def price_rule_join() -> str:
         # Legacy writers can still use the original five-column prices table. If their
         # prices change, stale reference metadata must not keep applying a surcharge.
-        return "LEFT JOIN price_rules r ON r.model=p.model AND r.input=p.input AND r.output=p.output AND r.cache=p.cache"
+        return (
+            "LEFT JOIN price_rules r ON r.model=p.model "
+            "AND r.input=p.input AND r.output=p.output AND r.cache=p.cache"
+        )
 
     @staticmethod
     def long_context_sql() -> str:
@@ -216,24 +221,38 @@ class Store:
 
     def prices(self) -> list:
         with self.connect() as db:
-            rows = [dict(r) for r in db.execute(f"SELECT p.*,COALESCE(r.basis,'manual') basis FROM prices p {self.price_rule_join()} ORDER BY p.model")]
-        sources = {p['model']: p for p in PRICE_PRESET['models']}
+            rows = [
+                dict(r) for r in db.execute(
+                    f"SELECT p.*,COALESCE(r.basis,'manual') basis FROM prices p {self.price_rule_join()} ORDER BY p.model"
+                )
+            ]
+        sources = {p["model"]: p for p in PRICE_PRESET["models"]}
         for row in rows:
-            if row['basis'] == PRICE_PRESET['id'] and row['model'] in sources:
-                row.update(source_url=sources[row['model']]['source_url'], verified_at=PRICE_PRESET['verified_at'])
+            if row["basis"] == PRICE_PRESET["id"] and row["model"] in sources:
+                row.update(
+                    source_url=sources[row["model"]]["source_url"],
+                    verified_at=PRICE_PRESET["verified_at"],
+                )
         return rows
 
     def import_price_preset(self, preset: str) -> int:
-        if preset != PRICE_PRESET['id']:
-            raise ValueError('unknown preset')
+        if preset != PRICE_PRESET["id"]:
+            raise ValueError("unknown preset")
         with self.connect() as db:
             imported = 0
-            for row in PRICE_PRESET['models']:
-                cursor = db.execute("INSERT OR IGNORE INTO prices(model,input,output,cache,updated) VALUES(?,?,?,?,?)",
-                                    [row['model'],row['input'],row['output'],row['cache'],datetime.now(timezone.utc).isoformat()])
+            for row in PRICE_PRESET["models"]:
+                cursor = db.execute(
+                    "INSERT OR IGNORE INTO prices(model,input,output,cache,updated) VALUES(?,?,?,?,?)",
+                    [
+                        row["model"], row["input"], row["output"], row["cache"],
+                        datetime.now(timezone.utc).isoformat(),
+                    ],
+                )
                 if cursor.rowcount:
-                    db.execute("INSERT OR REPLACE INTO price_rules VALUES(?,?,?,?,?)",
-                               [row['model'],preset,row['input'],row['output'],row['cache']])
+                    db.execute(
+                        "INSERT OR REPLACE INTO price_rules VALUES(?,?,?,?,?)",
+                        [row["model"], preset, row["input"], row["output"], row["cache"]],
+                    )
                     imported += 1
             return imported
 
@@ -244,19 +263,21 @@ class Store:
         prices = [float(data[k]) for k in ("input", "output", "cache")]
         if any(not math.isfinite(p) or p < 0 or p > 100000 for p in prices):
             raise ValueError("invalid price")
-        basis = data.get('basis') or 'manual'
-        if basis not in ('manual', PRICE_PRESET['id']):
-            raise ValueError('invalid pricing basis')
-        if basis == PRICE_PRESET['id']:
-            official = next((p for p in PRICE_PRESET['models'] if p['model'] == model), None)
-            if not official or prices != [official[k] for k in ('input','output','cache')]:
-                raise ValueError('official rates changed; save as manual')
+        basis = data.get("basis") or "manual"
+        if basis not in ("manual", PRICE_PRESET["id"]):
+            raise ValueError("invalid pricing basis")
+        if basis == PRICE_PRESET["id"]:
+            official = next((p for p in PRICE_PRESET["models"] if p["model"] == model), None)
+            if not official or prices != [official[k] for k in ("input", "output", "cache")]:
+                raise ValueError("official rates changed; save as manual")
         with self.connect() as db:
-            db.execute("INSERT OR REPLACE INTO prices(model,input,output,cache,updated) VALUES (?,?,?,?,?)",
-                       [model, *prices, datetime.now(timezone.utc).isoformat()])
+            db.execute(
+                "INSERT OR REPLACE INTO prices(model,input,output,cache,updated) VALUES (?,?,?,?,?)",
+                [model, *prices, datetime.now(timezone.utc).isoformat()],
+            )
             db.execute("DELETE FROM price_rules WHERE model=?", [model])
-            if basis == PRICE_PRESET['id']:
-                db.execute("INSERT INTO price_rules VALUES(?,?,?,?,?)", [model,basis,*prices])
+            if basis == PRICE_PRESET["id"]:
+                db.execute("INSERT INTO price_rules VALUES(?,?,?,?,?)", [model, basis, *prices])
 
     def prune(self):
         with self.connect() as db:
