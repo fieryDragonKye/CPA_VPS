@@ -15,3 +15,5 @@ plugin-freetier/internal/vendors/**/assets/** -text whitespace=blank-at-eol,blan
 *.bin -text
 # Preserve upstream vendored renderers byte-for-byte; do not reformat them.
 plugin/internal/plugin/web/vendor/* -whitespace
+# Patch context intentionally contains space-prefixed empty lines and tabs.
+patches/**/*.patch -whitespace

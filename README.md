@@ -4,13 +4,14 @@ CPA v8.0.47 后端、私人管理界面（Personal.6）、统计服务、私人�
 
 ```text
 web/       React 管理界面；默认通过同源私有网关访问统计服务
-plugin/    Codex 降智测试 0.4.4-personal.1，保留上游测试逻辑
+plugin/    Codex 降智测试 0.4.4-personal.2，保留上游测试逻辑
 plugin-freetier/ FreeTier 2API 0.1.21-personal.1，私人界面与上游供应商实现
 insights/  Python 标准库统计服务，SQLite 持久化
 deploy/    Linux Docker Compose，回环监听、独立数据目录
 skills/    四套可单独安装、仅显式调用的 Codex Skills
 docs/      环境、安装、维护、许可证与发布注意事项
 tools/     少量可复用的准备/构建工具
+patches/   固定上游版本的可选源码补丁，不自动替换正式后端
 ```
 
 ## 环境与最小依赖
@@ -54,6 +55,12 @@ Linux部署见[部署说明](deploy/README.md)，Skills见[安装说明](skills/
 请求明细可查看总耗时与首 Token 延迟（TTFT），Token 用量可展开查看。统计服务保存 CPA 的 `ttft_ms`；启动时为旧 SQLite 增加可空字段，保留原记录及去重标识。缺失、未测量和零哨兵值显示“—”，历史数据不估算补填；CSV 包含毫秒原值。TTFT 是 CPA 侧的首次 Token 计时，不一定等于浏览器首次显示文字，也不能单独判定代理线路质量。
 
 每次请求也可显示USD估算费用，支持导入有日期和官方来源的Standard参考单价、缓存输入与长上下文规则，并保留手动价格。订阅OAuth仅显示API等价费用，不是实际扣款；详见[定价口径](docs/PRICING.md)。
+
+凭据分析支持账号别名、主分组、归档、单凭据详情和横向对比，与用量分析共用采集器和数据库。统计对象与认证文件分开，历史无法可靠归属时保留为“未关联”；次数表示上游执行次数。总览查询与筛选项维护已合并优化，不新增采集服务。升级前的数据库备份、统计口径及回退限制见[凭据分析维护说明](insights/CREDENTIAL_ANALYTICS.md)。
+
+用量筛选、价格模型选择和凭据模型选择统一使用页面主题弹层；深色界面不再依赖浏览器原生候选菜单。插件筛选框对齐及提供商品牌悬停反馈保留现有玻璃风格。
+
+需要排查 Codex 链路时，可参考[可选传输诊断补丁](patches/codex-transport-trace/README.md)。默认构建仍使用校验过的官方后端，诊断补丁需要单独编译和启用，不自动部署。
 
 - 此仓库中的 Compose 仅发布宿主127.0.0.1:18318，通过SSH转发访问。管理API继续要求密钥。
 - 密钥、真实配置、OAuth、代理订阅、日志、SQLite与备份均属于私有运行数据，不进Git。
