@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { IconChevronDown } from './icons';
+import selectStyles from './Select.module.scss';
 
 interface AutocompleteInputProps {
   label?: string;
@@ -18,6 +19,8 @@ interface AutocompleteInputProps {
   options: string[] | { value: string; label?: string }[];
   placeholder?: string;
   disabled?: boolean;
+  required?: boolean;
+  maxLength?: number;
   hint?: string;
   error?: string;
   className?: string;
@@ -25,6 +28,8 @@ interface AutocompleteInputProps {
   wrapperStyle?: React.CSSProperties;
   id?: string;
   rightElement?: ReactNode;
+  variant?: 'default' | 'select';
+  ariaLabel?: string;
 }
 
 export function AutocompleteInput({
@@ -34,6 +39,8 @@ export function AutocompleteInput({
   options,
   placeholder,
   disabled,
+  required,
+  maxLength,
   hint,
   error,
   className = '',
@@ -41,10 +48,14 @@ export function AutocompleteInput({
   wrapperStyle,
   id,
   rightElement,
+  variant = 'default',
+  ariaLabel,
 }: AutocompleteInputProps) {
+  const selectVariant = variant === 'select';
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const inputWrapRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [dropdownStyle, setDropdownStyle] = useState<CSSProperties | null>(null);
@@ -62,6 +73,13 @@ export function AutocompleteInput({
     );
   });
   const showDropdown = isOpen && filteredOptions.length > 0 && !disabled;
+  const activeIndex = highlightedIndex < filteredOptions.length ? highlightedIndex : -1;
+  const listboxId = id ? `${id}-options` : undefined;
+
+  useEffect(() => {
+    if (!selectVariant || !showDropdown || activeIndex < 0 || !id) return;
+    document.getElementById(`${id}-option-${activeIndex}`)?.scrollIntoView({ block: 'nearest' });
+  }, [selectVariant, showDropdown, activeIndex, id]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -79,13 +97,17 @@ export function AutocompleteInput({
       if (!inputWrapRef.current) return;
       const rect = inputWrapRef.current.getBoundingClientRect();
       const spaceBelow = window.innerHeight - rect.bottom - 14;
-      const opensUp = spaceBelow < 200 && rect.top > spaceBelow;
+      const height = selectVariant ? 240 : 200;
+      const opensUp = spaceBelow < height && rect.top > spaceBelow;
+      const width = selectVariant ? Math.min(rect.width, window.innerWidth - 16) : rect.width;
       setDropdownStyle({
         position: 'fixed',
         ...(opensUp ? { bottom: window.innerHeight - rect.top + 6 } : { top: rect.bottom + 6 }),
-        left: rect.left,
-        width: rect.width,
-        maxHeight: Math.max(0, Math.min(200, opensUp ? rect.top - 14 : spaceBelow)),
+        left: selectVariant
+          ? Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
+          : rect.left,
+        width,
+        maxHeight: Math.max(0, Math.min(height, opensUp ? rect.top - 14 : spaceBelow)),
         zIndex: 2010,
       });
     };
@@ -97,7 +119,7 @@ export function AutocompleteInput({
       window.removeEventListener('resize', updateDropdownStyle);
       window.removeEventListener('scroll', updateDropdownStyle, true);
     };
-  }, [showDropdown]);
+  }, [showDropdown, selectVariant]);
 
   const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
     onChange(e.target.value);
@@ -112,6 +134,7 @@ export function AutocompleteInput({
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (disabled) return;
+    if (selectVariant && e.nativeEvent.isComposing) return;
 
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -122,7 +145,11 @@ export function AutocompleteInput({
       setHighlightedIndex((prev) => (prev < filteredOptions.length - 1 ? prev + 1 : prev));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
+      if (selectVariant && !isOpen) setIsOpen(true);
       setHighlightedIndex((prev) => (prev > 0 ? prev - 1 : 0));
+    } else if (selectVariant && showDropdown && (e.key === 'Home' || e.key === 'End')) {
+      e.preventDefault();
+      setHighlightedIndex(e.key === 'Home' ? 0 : filteredOptions.length - 1);
     } else if (e.key === 'Enter') {
       if (isOpen && highlightedIndex >= 0 && highlightedIndex < filteredOptions.length) {
         e.preventDefault();
@@ -132,6 +159,10 @@ export function AutocompleteInput({
         setIsOpen(false);
       }
     } else if (e.key === 'Escape') {
+      if (selectVariant && showDropdown) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
       setIsOpen(false);
     } else if (e.key === 'Tab') {
       setIsOpen(false);
@@ -143,34 +174,84 @@ export function AutocompleteInput({
       {label && <label htmlFor={id}>{label}</label>}
       <div style={{ position: 'relative' }} ref={inputWrapRef}>
         <input
+          ref={inputRef}
           id={id}
+          aria-label={ariaLabel}
+          role={selectVariant ? 'combobox' : undefined}
+          aria-autocomplete={selectVariant ? 'list' : undefined}
+          aria-expanded={selectVariant ? showDropdown : undefined}
+          aria-controls={selectVariant && showDropdown ? listboxId : undefined}
+          aria-activedescendant={
+            selectVariant && showDropdown && activeIndex >= 0 && id
+              ? `${id}-option-${activeIndex}`
+              : undefined
+          }
           className={`input ${className}`.trim()}
           value={value}
           onChange={handleInputChange}
           onFocus={() => setIsOpen(true)}
+          onClick={selectVariant ? () => setIsOpen(true) : undefined}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           disabled={disabled}
+          required={required}
+          maxLength={maxLength}
           autoComplete="off"
           style={{ paddingRight: 32 }}
         />
-        <div
-          style={{
-            position: 'absolute',
-            right: 8,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            display: 'flex',
-            alignItems: 'center',
-            pointerEvents: disabled ? 'none' : 'auto',
-            cursor: 'pointer',
-            height: '100%',
-          }}
-          onClick={() => !disabled && setIsOpen(!isOpen)}
-        >
-          {rightElement}
-          <IconChevronDown size={16} style={{ opacity: 0.5, marginLeft: 4 }} />
-        </div>
+        {selectVariant ? (
+          <button
+            type="button"
+            tabIndex={-1}
+            disabled={disabled}
+            aria-label={ariaLabel}
+            aria-controls={showDropdown ? listboxId : undefined}
+            aria-expanded={showDropdown}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              const nextOpen = !isOpen;
+              inputRef.current?.focus({ preventScroll: true });
+              setIsOpen(nextOpen);
+            }}
+            style={{
+              position: 'absolute',
+              right: 8,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              display: 'flex',
+              alignItems: 'center',
+              padding: 0,
+              border: 0,
+              background: 'transparent',
+              color: 'var(--text-secondary)',
+              cursor: 'pointer',
+            }}
+          >
+            {rightElement}
+            <IconChevronDown
+              size={16}
+              style={{ transform: showDropdown ? 'rotate(180deg)' : undefined }}
+            />
+          </button>
+        ) : (
+          <div
+            style={{
+              position: 'absolute',
+              right: 8,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              display: 'flex',
+              alignItems: 'center',
+              pointerEvents: disabled ? 'none' : 'auto',
+              cursor: 'pointer',
+              height: '100%',
+            }}
+            onClick={() => !disabled && setIsOpen(!isOpen)}
+          >
+            {rightElement}
+            <IconChevronDown size={16} style={{ opacity: 0.5, marginLeft: 4 }} />
+          </div>
+        )}
 
         {showDropdown &&
           dropdownStyle &&
@@ -178,30 +259,51 @@ export function AutocompleteInput({
           createPortal(
             <div
               ref={dropdownRef}
-              className="autocomplete-dropdown"
+              className={selectVariant ? selectStyles.dropdown : 'autocomplete-dropdown'}
+              role={selectVariant ? 'listbox' : undefined}
+              id={selectVariant ? listboxId : undefined}
+              aria-label={selectVariant ? ariaLabel : undefined}
               style={{
-                backgroundColor: 'var(--bg-secondary)',
-                border: '1px solid var(--border-color)',
-                borderRadius: 'var(--radius-md)',
-                overflowY: 'auto',
-                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                ...(selectVariant
+                  ? {}
+                  : {
+                      backgroundColor: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-md)',
+                      overflowY: 'auto',
+                      boxShadow:
+                        '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                    }),
                 ...dropdownStyle,
               }}
             >
               {filteredOptions.map((opt, index) => (
                 <div
                   key={`${opt.value}-${index}`}
+                  id={selectVariant && id ? `${id}-option-${index}` : undefined}
+                  role={selectVariant ? 'option' : undefined}
+                  aria-selected={selectVariant ? opt.value === value : undefined}
+                  className={
+                    selectVariant
+                      ? `${selectStyles.option} ${opt.value === value ? selectStyles.optionActive : ''} ${index === activeIndex ? selectStyles.optionHighlighted : ''}`.trim()
+                      : undefined
+                  }
+                  onMouseDown={selectVariant ? (event) => event.preventDefault() : undefined}
                   onClick={() => handleSelect(opt.value)}
-                  style={{
-                    padding: '8px 12px',
-                    cursor: 'pointer',
-                    backgroundColor:
-                      index === highlightedIndex ? 'var(--bg-tertiary)' : 'transparent',
-                    color: 'var(--text-primary)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    fontSize: '0.9rem',
-                  }}
+                  style={
+                    selectVariant
+                      ? undefined
+                      : {
+                          padding: '8px 12px',
+                          cursor: 'pointer',
+                          backgroundColor:
+                            index === highlightedIndex ? 'var(--bg-tertiary)' : 'transparent',
+                          color: 'var(--text-primary)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          fontSize: '0.9rem',
+                        }
+                  }
                   onMouseEnter={() => setHighlightedIndex(index)}
                 >
                   <span style={{ fontWeight: 500 }}>{opt.value}</span>

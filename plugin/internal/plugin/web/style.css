@@ -189,7 +189,7 @@ details.problem[open] summary .chev, .row.open .toggle .chev { transform: rotate
 .credential-enabled-filter { flex: none; white-space: nowrap; }
 .credential-filters { display: flex; flex: 1; gap: 10px; min-width: 0; }
 .credential-filter { flex: 0 1 160px; }
-.credential-filter > select { height: 32px; font-size: 12px; }
+.credential-filter > select { height: 36px; font-size: 14px; }
 .list-actions { display: flex; gap: 8px; }
 
 /* Candy results */
@@ -406,7 +406,7 @@ dialog::backdrop { background: rgb(0 0 0 / 35%); }
     appearance: base-select;
   }
   :root[data-personal-fluid][data-theme="dark"] .native-select > select {
-    display: block; padding-block: 5px; cursor: pointer;
+    display: flex; align-items: center; padding-block: 0; cursor: pointer;
   }
   :root[data-personal-fluid][data-theme="dark"] .native-select:has(> select:open)::after {
     transform: translateY(-50%) rotate(180deg);

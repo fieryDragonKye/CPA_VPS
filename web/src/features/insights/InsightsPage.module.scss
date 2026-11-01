@@ -155,17 +155,30 @@
   color: var(--text-secondary);
   min-width: 0;
 }
-.filterFields select {
+.filterSelect {
+  flex: 1;
   min-width: 0;
   width: 100%;
+}
+.filterSelect > button {
   border: 0;
   padding: 4px 0;
   background: transparent;
   color: var(--text-primary);
   font-size: 13px;
+  min-height: 40px;
 }
 .filterFields label > span {
   white-space: nowrap;
+}
+.filterFields label:focus-within {
+  border-color: var(--primary-color);
+}
+.filterFields .filterSelect > button,
+.filterFields .filterSelect > button:focus,
+.filterFields .filterSelect > button[aria-expanded='true'] {
+  box-shadow: none;
+  outline: none;
 }
 .metrics {
   display: grid;
@@ -628,6 +641,14 @@
   border: 1px solid var(--border-primary);
   padding: 10px;
 }
+.priceModelAutocomplete {
+  min-width: 0;
+  margin: 0;
+  gap: 8px;
+}
+.priceModelAutocomplete > label {
+  font-weight: 400;
+}
 .footer {
   display: flex;
   gap: 16px;
@@ -751,7 +772,7 @@
   .filterFields label > span {
     display: block;
   }
-  .filterFields select {
+  .filterSelect > button {
     min-height: 44px;
     font-size: 14px;
   }

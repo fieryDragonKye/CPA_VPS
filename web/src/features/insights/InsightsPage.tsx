@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
+import { AutocompleteInput } from '@/components/ui/AutocompleteInput';
 import { IconSidebarDashboard, IconSidebarQuota, IconSidebarLogs } from '@/components/ui/icons';
 import { authFilesApi } from '@/services/api';
 import { apiClient } from '@/services/api/client';
@@ -288,23 +290,31 @@ export function InsightsPage() {
           {(['model', 'provider', 'source', 'client'] as const).map((field) => (
             <label key={field}>
               <span>{t(`insights.${field}`)}</span>
-              <select value={query[field]} onChange={(event) => filter(field, event.target.value)}>
-                <option value="">{t('insights.all')}</option>
-                {summary?.options[field].map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
+              <Select
+                className={styles.filterSelect}
+                ariaLabel={t(`insights.${field}`)}
+                value={query[field]}
+                onChange={(value) => filter(field, value)}
+                options={[
+                  { value: '', label: t('insights.all') },
+                  ...(summary?.options[field].map((item) => ({ value: item, label: item })) ?? []),
+                ]}
+              />
             </label>
           ))}
           <label>
             <span>{t('insights.result')}</span>
-            <select value={query.result} onChange={(event) => filter('result', event.target.value)}>
-              <option value="">{t('insights.all')}</option>
-              <option value="success">{t('insights.success')}</option>
-              <option value="failed">{t('insights.failed')}</option>
-            </select>
+            <Select
+              className={styles.filterSelect}
+              ariaLabel={t('insights.result')}
+              value={query.result}
+              onChange={(value) => filter('result', value)}
+              options={[
+                { value: '', label: t('insights.all') },
+                { value: 'success', label: t('insights.success') },
+                { value: 'failed', label: t('insights.failed') },
+              ]}
+            />
           </label>
         </div>
       </section>
@@ -673,37 +683,34 @@ export function InsightsPage() {
                 void savePrice();
               }}
             >
-              <label>
-                {t('insights.model')}
-                <input
-                  list="insights-model-options"
-                  value={price.model}
-                  required
-                  maxLength={120}
-                  onChange={(event) => {
-                    const existing = prices.find((item) => item.model === event.target.value);
-                    setPrice(
-                      existing ?? {
-                        model: event.target.value,
-                        input: 0,
-                        output: 0,
-                        cache: 0,
-                        basis: 'manual',
-                      }
-                    );
-                  }}
-                />
-                <datalist id="insights-model-options">
-                  {[
-                    ...new Set([
-                      ...(summary?.options.model ?? []),
-                      ...prices.map((item) => item.model),
-                    ]),
-                  ].map((model) => (
-                    <option key={model} value={model} />
-                  ))}
-                </datalist>
-              </label>
+              <AutocompleteInput
+                id="insights-price-model"
+                label={t('insights.model')}
+                ariaLabel={t('insights.model')}
+                variant="select"
+                wrapperClassName={styles.priceModelAutocomplete}
+                value={price.model}
+                required
+                maxLength={120}
+                onChange={(model) => {
+                  const existing = prices.find((item) => item.model === model);
+                  setPrice(
+                    existing ?? {
+                      model,
+                      input: 0,
+                      output: 0,
+                      cache: 0,
+                      basis: 'manual',
+                    }
+                  );
+                }}
+                options={[
+                  ...new Set([
+                    ...(summary?.options.model ?? []),
+                    ...prices.map((item) => item.model),
+                  ]),
+                ]}
+              />
               {(['input', 'output', 'cache'] as const).map((field) => (
                 <label key={field}>
                   {t(`insights.price.${field}`)}
