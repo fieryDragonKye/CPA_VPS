@@ -62,6 +62,8 @@ Linux部署见[部署说明](deploy/README.md)，Skills见[安装说明](skills/
 
 需要排查 Codex 链路时，可参考[可选传输诊断补丁](patches/codex-transport-trace/README.md)。默认构建仍使用校验过的官方后端，诊断补丁需要单独编译和启用，不自动部署。
 
+网络问题的测量口径、匿名案例和日志判读见[CPA 网络排查](docs/NETWORK_TROUBLESHOOTING.md)；链式代理、主备选择、变更验收和回退边界见[VPS 节点接入与运维](docs/PROXY_OPERATIONS.md)。共享文档保留通用方法和占位示例，实例原稿与完整运行配置留在私有运维目录。
+
 - 此仓库中的 Compose 仅发布宿主127.0.0.1:18318，通过SSH转发访问。管理API继续要求密钥。
 - 密钥、真实配置、OAuth、代理订阅、日志、SQLite与备份均属于私有运行数据，不进Git。
 - 插件测试消耗模型额度，不在CI或部署时自动运行真实测试。
