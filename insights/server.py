@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
+from credential_analytics import CredentialStore, CollectorAlreadyRunning, CollectorLease, event_metadata, now_stamp
+
 ROOT = Path(__file__).resolve().parent.parent
 API = "/v8/management/extensions/insights/"
 QUEUE = "/v8/management/observability/usage/queue?count=500"
@@ -95,6 +97,7 @@ def normalize(record: object) -> dict | None:
     item["id"] = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     # Keep the pre-migration event identity stable; timing is optional metadata.
     item["ttft_ms"] = nullable_ttft(record.get("ttft_ms"))
+    item.update(event_metadata(record))
     return item
 
 
@@ -103,10 +106,10 @@ PRICE_PRESET = json.loads(
 )
 
 
-class Store:
+class Store(CredentialStore):
     def __init__(self, path: Path):
-        self.path = path
-        path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = path.resolve()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.executescript("""
                 PRAGMA journal_mode=WAL;
@@ -128,6 +131,8 @@ class Store:
             columns = {row[1] for row in db.execute("PRAGMA table_info(events)")}
             if "ttft_ms" not in columns:
                 db.execute("ALTER TABLE events ADD COLUMN ttft_ms REAL")
+            self.migrate_credentials(db)
+            self.migrate_event_options(db)
 
     @contextmanager
     def connect(self):
@@ -142,11 +147,45 @@ class Store:
     def ingest(self, records: list) -> int:
         items = [item for record in records if (item := normalize(record))]
         with self.connect() as db:
-            before = db.total_changes
+            db.execute("BEGIN IMMEDIATE")
+            inserted = 0
             for item in items:
+                item["legacy_id"] = item["id"]
+                self.associate(db, item)
+                if item["execution_id"]:
+                    identity = [self.instance_id, item["execution_id"]]
+                    item["id"] = "v2-" + hashlib.sha256(json.dumps(identity).encode()).hexdigest()
+                elif item["auth_index"]:
+                    identity = [self.instance_id, item["legacy_id"], item["auth_index"]]
+                    item["id"] = "v2-" + hashlib.sha256(json.dumps(identity).encode()).hexdigest()
                 names = list(item)
-                db.execute(f"INSERT OR IGNORE INTO events ({','.join(names)}) VALUES ({','.join('?' for _ in names)})", list(item.values()))
-            return db.total_changes - before
+                cursor = db.execute(f"INSERT OR IGNORE INTO events ({','.join(names)}) VALUES ({','.join('?' for _ in names)})", list(item.values()))
+                # total_changes also counts the option-maintenance triggers.
+                inserted += cursor.rowcount
+            return inserted
+
+    @staticmethod
+    def migrate_event_options(db):
+        fields = ("model", "provider", "source", "client")
+        exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='event_options'").fetchone()
+        db.execute("""CREATE TABLE IF NOT EXISTS event_options (
+            field TEXT NOT NULL,is_null INTEGER NOT NULL,value TEXT NOT NULL,refs INTEGER NOT NULL CHECK(refs>=0),
+            PRIMARY KEY(field,is_null,value)) WITHOUT ROWID""")
+        if not exists:
+            for field in fields:
+                db.execute(f"""INSERT INTO event_options(field,is_null,value,refs)
+                    SELECT ?,{field} IS NULL,COALESCE({field},''),COUNT(*)
+                    FROM events GROUP BY {field}""", (field,))
+        add = "\n".join(f"""INSERT INTO event_options(field,is_null,value,refs)
+            VALUES('{f}',NEW.{f} IS NULL,COALESCE(NEW.{f},''),1)
+            ON CONFLICT(field,is_null,value) DO UPDATE SET refs=refs+1;""" for f in fields)
+        remove = "\n".join(f"""UPDATE event_options SET refs=refs-1
+            WHERE field='{f}' AND is_null=(OLD.{f} IS NULL) AND value=COALESCE(OLD.{f},'');
+            DELETE FROM event_options WHERE field='{f}' AND is_null=(OLD.{f} IS NULL)
+              AND value=COALESCE(OLD.{f},'') AND refs=0;""" for f in fields)
+        for name, event, body in (("insert", "INSERT", add), ("delete", "DELETE", remove),
+                                  ("update", "UPDATE OF model,provider,source,client", remove+'\n'+add)):
+            db.execute(f"CREATE TRIGGER IF NOT EXISTS event_options_{name} AFTER {event} ON events BEGIN {body} END")
 
     def where(self, query: dict) -> tuple[str, list]:
         hours = {"1h": 1, "5h": 5, "24h": 24, "7d": 168, "30d": 720}.get(query.get("range"), 24)
@@ -156,6 +195,18 @@ class Store:
             if value := query.get(field):
                 clauses.append(f"e.{field} = ?")
                 args.append(value[:160])
+        if value := query.get("credential_id"):
+            if value == "unlinked":
+                clauses.append("e.credential_id IS NULL")
+            else:
+                clauses.append("e.credential_id=?")
+                args.append(str(value)[:128])
+        if value := query.get("group_name"):
+            clauses.append("EXISTS (SELECT 1 FROM credentials c WHERE c.id=e.credential_id AND c.group_name=?)")
+            args.append(str(value)[:80])
+        if value := query.get("search"):
+            clauses.append("EXISTS (SELECT 1 FROM credentials c WHERE c.id=e.credential_id AND instr(lower(c.alias),lower(?))>0)")
+            args.append(str(value)[:120])
         if query.get("result") in ("success", "failed"):
             clauses.append("e.failed = ?")
             args.append(int(query["result"] == "failed"))
@@ -171,34 +222,98 @@ class Store:
         )
 
     @staticmethod
+    def aggregate_index(query: dict) -> str:
+        # The pagination index orders tied timestamps by hash, causing random table
+        # reads on full aggregates. Keep aggregate scans on the smaller time index.
+        if query.get("credential_id"):
+            return "events_credential_time"
+        if query.get("model"):
+            return "events_model_time"
+        return "events_time"
+
+    @classmethod
+    def aggregate_source(cls, db, query: dict, args: list) -> str:
+        index = cls.aggregate_index(query)
+        if index == "events_time":
+            oldest = db.execute("SELECT MIN(timestamp) FROM events").fetchone()[0]
+            # If the time predicate excludes nothing, a time-index traversal
+            # just adds rowid lookups. Scan the table once in storage order.
+            if oldest is not None and oldest >= args[0]:
+                return "NOT INDEXED"
+        return f"INDEXED BY {index}"
+
+    @staticmethod
+    def token_sql(field: str) -> str:
+        canonical = {"input_tokens": "accounted_input_tokens", "output_tokens": "accounted_output_tokens",
+                     "total_tokens": "accounted_total_tokens", "reasoning_tokens": "accounted_reasoning_tokens",
+                     "cached_tokens": "cache_read_tokens"}[field]
+        condition = "e.token_quality='complete'"
+        if field == "total_tokens":
+            condition = "e.accounting_version=2 AND e.token_breakdown IS NOT NULL"
+        return f"(CASE WHEN {condition} THEN e.{canonical} ELSE e.{field} END)"
+
+    @staticmethod
+    def priceable_sql() -> str:
+        return """(p.model IS NOT NULL AND (e.event_schema=1 OR (
+            (e.response_model IS NULL OR e.response_model=e.model)
+            AND e.service_tier IN ('default','standard') AND (
+              (e.token_quality='legacy' AND e.tokens_present=1 AND e.provider IN ('codex','openai','openai-compatibility'))
+              OR (e.token_quality='complete' AND e.cache_write_tokens=0)))))"""
+
+    @staticmethod
     def long_context_sql() -> str:
-        return f"(r.basis='{PRICE_PRESET['id']}' AND e.input_tokens>{PRICE_PRESET['long_context_threshold']})"
+        return f"({Store.priceable_sql()} AND r.basis='{PRICE_PRESET['id']}' AND {Store.token_sql('input_tokens')}>{PRICE_PRESET['long_context_threshold']})"
 
     @staticmethod
     def cost_sql() -> str:
         long = Store.long_context_sql()
         input_factor = f"(CASE WHEN {long} THEN {PRICE_PRESET['long_input_multiplier']} ELSE 1 END)"
         output_factor = f"(CASE WHEN {long} THEN {PRICE_PRESET['long_output_multiplier']} ELSE 1 END)"
-        return f"((MAX(e.input_tokens - MIN(e.cached_tokens,e.input_tokens),0)*p.input + MIN(e.cached_tokens,e.input_tokens)*p.cache)*{input_factor} + e.output_tokens*p.output*{output_factor})/1000000.0"
+        inp, out = Store.token_sql("input_tokens"), Store.token_sql("output_tokens")
+        uncached = f"(CASE WHEN e.token_quality='complete' THEN e.uncached_tokens ELSE MAX({inp}-MIN(e.cached_tokens,{inp}),0) END)"
+        cache = f"(CASE WHEN e.token_quality='complete' THEN e.cache_read_tokens ELSE MIN(e.cached_tokens,{inp}) END)"
+        return f"(CASE WHEN {Store.priceable_sql()} THEN (({uncached}*p.input + {cache}*p.cache)*{input_factor} + {out}*p.output*{output_factor})/1000000.0 END)"
 
     def summary(self, query: dict) -> dict:
         where, args = self.where(query)
         with self.connect() as db:
-            row = dict(db.execute(f"""SELECT COUNT(*) requests, COALESCE(SUM(e.failed),0) failures,
-              COALESCE(SUM(e.input_tokens),0) input_tokens, COALESCE(SUM(e.output_tokens),0) output_tokens,
-              COALESCE(SUM(e.reasoning_tokens),0) reasoning_tokens, COALESCE(SUM(e.cached_tokens),0) cached_tokens,
-              COALESCE(SUM(e.total_tokens),0) total_tokens, AVG(e.latency_ms) latency_ms,
-              SUM({self.cost_sql()}) estimated_cost, COUNT(p.model) priced_requests
-              FROM events e LEFT JOIN prices p ON p.model=e.model {self.price_rule_join()} WHERE {where}""", args).fetchone())
+            db.execute("BEGIN")
+            source = self.aggregate_source(db, query, args)
+            # Materialize only the numeric/model/hour projection for this read
+            # snapshot. Prices remain query-time estimates, never a stale cache.
+            hint = "MATERIALIZED " if sqlite3.sqlite_version_info >= (3, 35, 0) else ""
+            grouped = [dict(r) for r in db.execute(f"""WITH filtered AS {hint}(
+                SELECT e.model,substr(e.timestamp,1,13)||':00:00+00:00' hour,e.failed,e.latency_ms,
+                  {self.token_sql('input_tokens')} input_tokens,{self.token_sql('output_tokens')} output_tokens,
+                  {self.token_sql('reasoning_tokens')} reasoning_tokens,{self.token_sql('cached_tokens')} cached_tokens,
+                  {self.token_sql('total_tokens')} total_tokens,{self.cost_sql()} estimated_cost,
+                  {self.priceable_sql()} priced
+                FROM events e {source} LEFT JOIN prices p ON p.model=e.model
+                  {self.price_rule_join()} WHERE {where}),
+              top_models AS (
+                SELECT model,COUNT(*) requests,SUM(failed) failures,SUM(total_tokens) total_tokens
+                FROM filtered GROUP BY model ORDER BY total_tokens DESC LIMIT 12)
+              SELECT 'total' kind,NULL bucket,COUNT(*) requests,COALESCE(SUM(failed),0) failures,
+                COALESCE(SUM(input_tokens),0) input_tokens,COALESCE(SUM(output_tokens),0) output_tokens,
+                COALESCE(SUM(reasoning_tokens),0) reasoning_tokens,COALESCE(SUM(cached_tokens),0) cached_tokens,
+                COALESCE(SUM(total_tokens),0) total_tokens,AVG(latency_ms) latency_ms,
+                SUM(estimated_cost) estimated_cost,COALESCE(SUM(priced),0) priced_requests
+              FROM filtered
+              UNION ALL SELECT 'trend',hour,COUNT(*),SUM(failed),NULL,NULL,NULL,NULL,
+                SUM(total_tokens),NULL,NULL,NULL FROM filtered GROUP BY hour
+              UNION ALL SELECT 'model',model,requests,failures,NULL,NULL,NULL,NULL,
+                total_tokens,NULL,NULL,NULL FROM top_models""", args)]
+            row = {k: v for k, v in grouped[0].items() if k not in ("kind", "bucket")}
             row["success_rate"] = (row["requests"] - row["failures"]) / row["requests"] * 100 if row["requests"] else None
             # Local date grouping is done by the browser; buckets are UTC and unambiguous.
-            row["trend"] = [dict(r) for r in db.execute(f"""SELECT substr(e.timestamp,1,13)||':00:00+00:00' timestamp,
-              COUNT(*) requests, SUM(e.failed) failures, SUM(e.total_tokens) total_tokens
-              FROM events e WHERE {where} GROUP BY substr(e.timestamp,1,13) ORDER BY timestamp""", args)]
-            row["models"] = [dict(r) for r in db.execute(f"""SELECT e.model, COUNT(*) requests,
-              SUM(e.total_tokens) total_tokens, SUM(e.failed) failures
-              FROM events e WHERE {where} GROUP BY e.model ORDER BY total_tokens DESC LIMIT 12""", args)]
-            row["options"] = {field: [r[0] for r in db.execute(f"SELECT DISTINCT {field} FROM events ORDER BY {field} LIMIT 500")]
+            row["trend"] = sorted([{"timestamp": r["bucket"], "requests": r["requests"],
+                "failures": r["failures"], "total_tokens": r["total_tokens"]}
+                for r in grouped if r["kind"] == "trend"], key=lambda r: r["timestamp"])
+            row["models"] = [{"model": r["bucket"], "requests": r["requests"],
+                "total_tokens": r["total_tokens"], "failures": r["failures"]}
+                for r in grouped if r["kind"] == "model"]
+            row["options"] = {field: [r[0] for r in db.execute("""SELECT CASE WHEN is_null THEN NULL ELSE value END
+                                FROM event_options WHERE field=? ORDER BY is_null DESC,value LIMIT 500""", (field,))]
                               for field in ("model", "provider", "source", "client")}
             row["stored_records"] = db.execute("SELECT COUNT(*) FROM events").fetchone()[0]
             row["first_record"] = db.execute("SELECT MIN(timestamp) FROM events").fetchone()[0]
@@ -210,10 +325,15 @@ class Store:
         page = max(1, min(positive(query.get("page", 1)), 100000))
         size = 10000 if export else 25
         with self.connect() as db:
+            db.execute("BEGIN")
             count = db.execute(f"SELECT COUNT(*) FROM events e WHERE {where}", args).fetchone()[0]
             rows = [dict(r) for r in db.execute(f"""SELECT e.timestamp,e.model,e.alias,e.provider,e.source,e.client,e.failed,
-              e.latency_ms,e.ttft_ms,e.input_tokens,e.output_tokens,e.reasoning_tokens,e.cached_tokens,e.total_tokens,e.endpoint,
-              {self.cost_sql()} estimated_cost, CASE WHEN p.model IS NOT NULL THEN COALESCE(r.basis,'manual') END pricing_basis,
+              e.latency_ms,e.ttft_ms,{self.token_sql('input_tokens')} input_tokens,{self.token_sql('output_tokens')} output_tokens,
+              {self.token_sql('reasoning_tokens')} reasoning_tokens,{self.token_sql('cached_tokens')} cached_tokens,
+              {self.token_sql('total_tokens')} total_tokens,e.endpoint,
+              e.credential_id,e.association_state,e.event_schema,e.stream,e.token_quality,
+              e.cache_write_tokens,e.unclassified_tokens,e.service_tier,e.response_model,
+              {self.cost_sql()} estimated_cost, CASE WHEN {self.priceable_sql()} THEN COALESCE(r.basis,'manual') END pricing_basis,
               CASE WHEN {self.long_context_sql()} THEN 1 ELSE 0 END long_context_applied
               FROM events e LEFT JOIN prices p ON p.model=e.model {self.price_rule_join()}
               WHERE {where} ORDER BY e.timestamp DESC,e.id DESC LIMIT ? OFFSET ?""", [*args, size, 0 if export else (page - 1) * size])]
@@ -294,6 +414,13 @@ class Keeper:
         self.last_collected = None
         self.last_error = None
         self.collected = 0
+        self.last_poll = None
+        self.last_received = None
+        self.metadata_error = None
+        self.metadata_coverage = None
+        self.rejected = 0
+        self.duplicates = 0
+        self.pending_count = 0
         self.stop = threading.Event()
 
     def request(self, path: str):
@@ -302,21 +429,63 @@ class Keeper:
             return json.load(response)
 
     def run(self):
+        lease = CollectorLease(self.store.path)
+        try:
+            lease.__enter__()
+        except CollectorAlreadyRunning:
+            self.state, self.last_error = "waiting", "collector_already_running"
+            return
+        except OSError:
+            self.state, self.last_error = "waiting", "storage_unavailable"
+            return
+        try:
+            self._run()
+        finally:
+            lease.__exit__()
+
+    def _run(self):
         housekeeping = 0.0
         last_config_check = 0.0
+        last_metadata_check = 0.0
+        pending = None
         while not self.stop.is_set():
             try:
-                config = self.request("/v8/management/config") if self.state != "running" or time.time() - last_config_check > 30 else None
-                if config is not None:
-                    last_config_check = time.time()
-                if config is not None and not config.get("observability", {}).get("usage", {}).get("usage-statistics-enabled", False):
-                    self.state, self.last_error = "disabled", "statistics_disabled"
-                    self.stop.wait(10)
-                    continue
-                records = self.request(QUEUE)
-                if not isinstance(records, list):
-                    raise ValueError("invalid usage queue")
-                count = self.store.ingest(records)
+                if pending is None:
+                    config = self.request("/v8/management/config") if self.state != "running" or time.time() - last_config_check > 30 else None
+                    if config is not None:
+                        last_config_check = time.time()
+                    if config is not None and not config.get("observability", {}).get("usage", {}).get("usage-statistics-enabled", False):
+                        self.state, self.last_error = "disabled", "statistics_disabled"
+                        self.stop.wait(10)
+                        continue
+                    if time.time() - last_metadata_check > 30:
+                        try:
+                            metadata = self.request("/v8/management/credentials")
+                            self.metadata_coverage = self.store.sync_credentials(metadata)
+                            self.metadata_error = None
+                        except urllib.error.HTTPError as error:
+                            if error.code in (401, 403):
+                                raise
+                            self.metadata_error = f"http_{error.code}"
+                        except (ValueError, TypeError):
+                            self.metadata_error = "invalid_metadata"
+                        except urllib.error.URLError:
+                            self.metadata_error = "metadata_unavailable"
+                        last_metadata_check = time.time()
+                    records = self.request(QUEUE)
+                    if not isinstance(records, list):
+                        raise ValueError("invalid usage queue")
+                    self.last_poll = now_stamp()
+                    if records:
+                        self.last_received = self.last_poll
+                    pending = records
+                    self.pending_count = len(pending)
+                count = self.store.ingest(pending)
+                accepted = sum(normalize(record) is not None for record in pending)
+                self.rejected += len(pending) - accepted
+                self.duplicates += accepted - count
+                pending = None
+                self.pending_count = 0
                 self.collected += count
                 if count:
                     self.last_collected = datetime.now(timezone.utc).isoformat()
@@ -331,6 +500,12 @@ class Keeper:
                 if error.code in (401, 403):
                     return
                 self.stop.wait(10)
+            except sqlite3.Error:
+                self.state, self.last_error = "waiting", "storage_unavailable"
+                self.stop.wait(10)
+            except ValueError:
+                self.state, self.last_error = "waiting", "invalid_queue_payload"
+                self.stop.wait(10)
             except Exception:
                 self.state, self.last_error = "waiting", "cpa_unavailable"
                 self.stop.wait(10)
@@ -338,6 +513,10 @@ class Keeper:
     def status(self) -> dict:
         return {"state": self.state, "last_collected": self.last_collected,
                 "last_error": self.last_error, "collected_this_run": self.collected,
+                "last_poll": self.last_poll, "last_received": self.last_received,
+                "metadata_error": self.metadata_error, "metadata_coverage": self.metadata_coverage,
+                "rejected_this_run": self.rejected, "duplicates_this_run": self.duplicates,
+                "pending_count": self.pending_count,
                 "retention_days": 90, "record_limit": 250000, "mode": "http_queue"}
 
 
@@ -406,6 +585,10 @@ def make_handler(keeper: Keeper, page: Path):
                     return self.respond(keeper.store.summary(query))
                 if route == "events":
                     return self.respond(keeper.store.events(query))
+                if route == "credentials":
+                    return self.respond(keeper.store.credentials(query))
+                if route == "credentials/summary":
+                    return self.respond(keeper.store.credential_report(query))
                 if route == "prices":
                     return self.respond(keeper.store.prices())
                 if route == "pricing-preset":
@@ -413,7 +596,7 @@ def make_handler(keeper: Keeper, page: Path):
                 if route == "export":
                     records = keeper.store.events(query, export=True)
                     output = io.StringIO()
-                    fields = ["timestamp", "model", "provider", "source", "client", "failed", "latency_ms", "ttft_ms", "input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens", "total_tokens", "estimated_cost", "pricing_basis", "long_context_applied"]
+                    fields = ["timestamp", "model", "provider", "source", "client", "failed", "latency_ms", "ttft_ms", "input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens", "total_tokens", "estimated_cost", "pricing_basis", "long_context_applied", "credential_id", "association_state", "event_schema", "stream", "token_quality", "cache_write_tokens", "unclassified_tokens"]
                     writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
                     writer.writeheader()
                     for row in records["rows"]:
@@ -429,7 +612,7 @@ def make_handler(keeper: Keeper, page: Path):
         def do_POST(self):
             if not self.origin_ok():
                 return self.respond({"error": "origin_not_allowed"}, 403)
-            if self.path in (API + "prices", API + "prices/import"):
+            if self.path in (API + "prices", API + "prices/import", API + "credentials/edit"):
                 if not self.authorized():
                     return self.respond({"error": "unauthorized"}, 401)
                 try:
@@ -439,12 +622,15 @@ def make_handler(keeper: Keeper, page: Path):
                     data = json.loads(self.rfile.read(size))
                     if not isinstance(data, dict):
                         raise ValueError('expected object')
+                    if self.path == API + 'credentials/edit':
+                        keeper.store.edit_credential(data)
+                        return self.respond({"saved": True})
                     if self.path == API + 'prices/import':
                         return self.respond({'saved': True, 'imported': keeper.store.import_price_preset(data.get('preset'))})
                     keeper.store.save_price(data)
                     return self.respond({"saved": True})
                 except (ValueError, KeyError, TypeError):
-                    return self.respond({"error": "invalid_price"}, 400)
+                    return self.respond({"error": "invalid_credential" if self.path == API + 'credentials/edit' else "invalid_price"}, 400)
             return self.proxy()
 
         def do_PUT(self):

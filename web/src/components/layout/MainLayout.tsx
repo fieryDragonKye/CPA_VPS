@@ -647,6 +647,11 @@ export function MainLayout() {
           icon: sidebarIcons.dashboard,
         },
         {
+          path: '/credential-analytics',
+          labelKey: 'credentialAnalytics.title',
+          icon: sidebarIcons.authFiles,
+        },
+        {
           path: '/quota',
           labelKey: 'nav.quota_management',
           metaKey: 'nav_meta.quota_management',
