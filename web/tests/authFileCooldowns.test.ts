@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { I18nextProvider } from 'react-i18next';
 import i18n from '../src/i18n/index';
 import { authFilesApi, normalizeAuthFilesResponse } from '../src/services/api/authFiles';
 import { normalizeAuthFileCooldowns } from '../src/services/api/authFileCooldowns';
@@ -31,6 +32,15 @@ const render = (
   value?: AuthFileCooldownSnapshot,
   options: { resetting?: boolean; resetDisabled?: boolean; onReset?: () => void } = {}
 ) => renderToStaticMarkup(createElement(AuthFileCooldownSection, { snapshot: value, ...options }));
+
+function buttonTitle(markup: string): string {
+  return (markup.match(/<button\b[^>]*\btitle="([^"]*)"/)?.[1] ?? '')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#x27;', "'")
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&');
+}
 
 function response(files: Record<string, unknown>[]): AuthFilesResponse {
   return { observed_at: observedAt, files } as unknown as AuthFilesResponse;
@@ -225,13 +235,28 @@ describe('cooldown section rendering', () => {
 
     const available = render(snapshot, { onReset: () => {} });
     expect(available).toContain(i18n.t('auth_files.cooldown_reset_button'));
-    expect(available).toContain(i18n.t('auth_files.cooldown_reset_hint'));
+    expect(buttonTitle(available)).toBe(i18n.t('auth_files.cooldown_reset_hint'));
     expect(available).not.toContain('disabled=""');
 
     const pending = render(snapshot, { onReset: () => {}, resetting: true });
     expect(pending).toContain('disabled=""');
     expect(pending).toContain('loading-spinner');
   });
+
+  test.each(['en', 'zh-CN'])(
+    'preserves the reset tooltip after HTML attribute escaping in %s',
+    (language) => {
+      const translations = i18n.cloneInstance({ lng: language });
+      const markup = renderToStaticMarkup(
+        createElement(
+          I18nextProvider,
+          { i18n: translations },
+          createElement(AuthFileCooldownSection, { snapshot, onReset: () => {} })
+        )
+      );
+      expect(buttonTitle(markup)).toBe(translations.t('auth_files.cooldown_reset_hint'));
+    }
+  );
 
   test('shows elapsed / refresh confirmation and safely escapes model keys', () => {
     const expired = { ...snapshot, receivedAtMs: receivedAtMs - 100_000 };
